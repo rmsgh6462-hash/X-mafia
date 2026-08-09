@@ -231,13 +231,13 @@ export function NightQuizConfigForm({
 
       <div>
         <p className="mb-2 text-xs font-bold text-white/50">제한 시간</p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {TIME_LIMIT_PRESETS.map((t) => (
             <button
               key={t}
               type="button"
               onClick={() => setTimeLimitSec(t)}
-              className={`rounded-lg px-4 py-2 text-sm font-bold ${
+              className={`rounded-lg px-3 py-2 text-sm font-bold ${
                 timeLimitSec === t
                   ? 'bg-indigo-500 text-white'
                   : 'bg-white/10 text-white'
@@ -247,6 +247,22 @@ export function NightQuizConfigForm({
             </button>
           ))}
         </div>
+        <label className="mt-3 flex items-center gap-2 text-xs text-white/50">
+          직접 입력
+          <input
+            type="number"
+            min={5}
+            max={300}
+            value={timeLimitSec}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              if (!Number.isFinite(n)) return;
+              setTimeLimitSec(Math.max(5, Math.min(300, Math.floor(n))));
+            }}
+            className="w-24 rounded-lg border border-white/15 bg-stone-900 px-2 py-1.5 font-mono text-sm font-bold text-white"
+          />
+          <span>초 (5–300)</span>
+        </label>
       </div>
 
       <label className="block text-xs text-white/50">

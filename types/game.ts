@@ -39,6 +39,8 @@ export interface ActiveMorningEvent {
   actorId: string | null;
   targetId: string | null;
   targetName?: string | null;
+  /** 대상 학생 성별. 구버전 payload에는 없을 수 있어 클라이언트가 보정한다. */
+  targetGender?: PlayerGender | null;
   /** 의사 연출만 사용 — 마피아 공격을 막았는지 */
   success?: boolean;
 }
@@ -225,6 +227,8 @@ export interface NightResults {
 }
 
 /** 개별 플레이어 */
+export type PlayerGender = 'boy' | 'girl';
+
 export interface Player {
   id: string;
   name: string;
@@ -233,6 +237,8 @@ export interface Player {
   nightTarget: string | null;
   partnerId: string | null;
   avatarId: string;
+  /** 학생 캐릭터 성별. 이전 방 데이터에는 없을 수 있어 avatarId로 보정한다. */
+  gender?: PlayerGender;
   avatarIndex?: number;
   /** 의사 자힐 1회 사용 여부 (게임 전체 1회) */
   hasSelfHealed?: boolean;
@@ -282,6 +288,8 @@ export interface GameRoom {
   currentRound: number;
   /** 게임 종료 시 승자 */
   winnerSide: WinnerSide | null;
+  /** 게임 종료 시 승자 — 외부 연동용 명시적 별칭 */
+  victoryTeam?: WinnerSide | null;
   /** 재투표 대상 playerId 목록 (null이면 일반 투표) */
   voteRevoteCandidates: string[] | null;
   dayVoteResult: DayVoteResult | null;

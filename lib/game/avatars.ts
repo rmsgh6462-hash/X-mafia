@@ -256,6 +256,37 @@ export function getAvatarDef(id: string | null | undefined): AvatarDef {
   return found ?? MALE_AVATARS[0];
 }
 
+export interface AvatarSprite {
+  src: string;
+  column: number;
+  row: number;
+  backgroundPosition: string;
+}
+
+/**
+ * The roster art is stored as two 4x4 sprite sheets. Keeping the existing
+ * M0–M15/F0–F15 IDs means saved rooms and realtime payloads stay compatible.
+ */
+export function getAvatarSprite(id: string | null | undefined): AvatarSprite {
+  const avatar = getAvatarDef(id);
+  const index = Number.parseInt(avatar.id.slice(1), 10);
+  const safeIndex = Number.isFinite(index) ? Math.max(0, Math.min(15, index)) : 0;
+  const column = safeIndex % 4;
+  const row = Math.floor(safeIndex / 4);
+
+  return {
+    src: avatar.gender === 'M' ? '/avatar-assets/roster-boys.png' : '/avatar-assets/roster-girls.png',
+    column,
+    row,
+    backgroundPosition: `${(column * 100) / 3}% ${(row * 100) / 3}%`,
+  };
+}
+
+/** 플레이어 화면에서 사용할 성별로 아바타 성별을 변환한다. */
+export function playerGenderFromAvatarId(id: string | null | undefined): 'boy' | 'girl' {
+  return getAvatarDef(id).gender === 'F' ? 'girl' : 'boy';
+}
+
 export function isAvatarId(id: string): id is AvatarId {
   return ALL_AVATARS.some((a) => a.id === id);
 }

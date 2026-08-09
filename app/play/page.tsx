@@ -16,6 +16,7 @@ import GameBackground, {
 import { AvatarPickerGrid } from '@/components/play/AvatarPicker';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { GhostMode } from '@/components/play/GhostMode';
+import { GameResultPanel } from '@/components/play/GameResultPanel';
 import { MatchChatPanel } from '@/components/play/MatchChatPanel';
 import {
   getActiveMorningEvents,
@@ -29,7 +30,12 @@ import {
 import { PlayerRoster } from '@/components/play/PlayerRoster';
 import { Popup } from '@/components/play/Popup';
 import { RoleCard } from '@/components/play/RoleCard';
-import { takenAvatarIds, isAvatarId, type AvatarId } from '@/lib/game/avatars';
+import {
+  isAvatarId,
+  playerGenderFromAvatarId,
+  takenAvatarIds,
+  type AvatarId,
+} from '@/lib/game/avatars';
 import { isFirebaseConfigured } from '@/lib/firebase';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import {
@@ -189,20 +195,6 @@ function PlayPageInner() {
           return;
         }
 
-        if (remote.gameState === 'ENDED') {
-          clearPlaySession();
-          setSession(null);
-          setRoom(null);
-          const winMsg =
-            remote.winnerSide === 'MAFIA'
-              ? '총 라운드가 끝났습니다. 마피아 팀의 최종 승리입니다!'
-              : remote.winnerSide === 'CITIZEN'
-                ? '마피아를 모두 찾아냈습니다. 시민 팀의 승리입니다!'
-                : '선생님이 게임을 종료했습니다.';
-          showAlert('게임 종료', winMsg);
-          return;
-        }
-
         setRoom(remote);
         joinGuardRef.current = false;
 
@@ -237,6 +229,7 @@ function PlayPageInner() {
       nightTarget: null,
       partnerId: null,
       avatarId: avatarId ?? 'M0',
+      gender: playerGenderFromAvatarId(avatarId ?? 'M0'),
     };
   }, [room, session, name, avatarId]);
 
@@ -328,16 +321,23 @@ function PlayPageInner() {
       room.gameState !== 'RESULT' ||
       (morningActiveEvents.length === 0 && morningEvents.length === 0)
     ) {
-      if (room?.gameState !== 'RESULT') seenMorningResultRef.current = null;
+      if (room?.gameState !== 'RESULT') {
+        seenMorningResultRef.current = null;
+        setMorningResultOpen(false);
+      }
       return;
     }
-    const key = JSON.stringify({
-      events: morningEvents,
-      result: room.nightResults,
-    });
+    const key = [
+      room.roomId,
+      room.currentRound,
+      morningEvents.join(','),
+      morningActiveEvents.map((e) => e.event).join(','),
+      (room.nightResults?.deadPlayerIds ?? []).join(','),
+    ].join('|');
     if (seenMorningResultRef.current === key) return;
     seenMorningResultRef.current = key;
-    setMorningResultOpen(true);
+    const timer = window.setTimeout(() => setMorningResultOpen(true), 350);
+    return () => window.clearTimeout(timer);
   }, [
     room?.gameState,
     room?.nightResults,
@@ -630,17 +630,27 @@ function PlayPageInner() {
       </header>
 
       <main className="mt-6 flex flex-1 flex-col space-y-5">
-        <PlayerRoster
-          room={room}
-          highlightId={me.id}
-          compact
-          viewer={me}
-        />
-
-        {isGhost ? (
-          <GhostMode room={room} me={me} pin={session.pin} />
+        {room.gameState === 'ENDED' ? (
+          <GameResultPanel
+            winnerSide={room.winnerSide ?? room.victoryTeam}
+            players={room.players}
+            currentPlayerId={me.id}
+            round={room.currentRound}
+            maxRounds={room.maxRounds}
+          />
         ) : (
           <>
+            <PlayerRoster
+              room={room}
+              highlightId={me.id}
+              compact
+              viewer={me}
+            />
+
+            {isGhost ? (
+              <GhostMode room={room} me={me} pin={session.pin} />
+            ) : (
+              <>
             <AnimatePresence mode="wait">
               {me.role && room.gameState !== 'WAITING' ? (
                 <motion.div
@@ -654,7 +664,6 @@ function PlayPageInner() {
                       avatarId={me.avatarId}
                       isAlive={me.isAlive}
                       size={62}
-                      showLabel
                     />
                     <div className="min-w-0">
                       <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">
@@ -754,6 +763,8 @@ function PlayPageInner() {
                   </span>
                 )}
               </section>
+            )}
+              </>
             )}
           </>
         )}

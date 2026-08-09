@@ -89,7 +89,7 @@ export function createNightQuizState(
   room: GameRoom,
   config: NightQuizConfig,
 ): NightQuizState {
-  const timeLimitSec = Math.max(15, config.timeLimitSec || 60);
+  const timeLimitSec = Math.max(5, Math.min(300, config.timeLimitSec || 60));
   const choices = (config.choices ?? []).slice(0, 4);
   while (choices.length < 4) choices.push(`보기${choices.length + 1}`);
 

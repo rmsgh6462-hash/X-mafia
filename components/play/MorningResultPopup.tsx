@@ -1,20 +1,16 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import Image from 'next/image';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Camera,
   Crosshair,
-  FileText,
-  Newspaper,
+  HeartPulse,
   Radio,
-  Search,
-  ShieldCheck,
-  Sparkles,
   Sunrise,
 } from 'lucide-react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
+import { MorningReporterNews } from '@/components/play/MorningReporterNews';
+import { playerGenderFromAvatarId } from '@/lib/game/avatars';
 import { playMorningEventSound } from '@/lib/game/audio';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import type {
@@ -22,6 +18,7 @@ import type {
   MorningEvent,
   NightResults,
   Player,
+  PlayerGender,
 } from '@/types/game';
 
 const EVENT_ORDER: MorningEvent[] = [
@@ -34,6 +31,22 @@ function sortMorningEvents(events: ActiveMorningEvent[]): ActiveMorningEvent[] {
   return [...events].sort(
     (a, b) => EVENT_ORDER.indexOf(a.event) - EVENT_ORDER.indexOf(b.event),
   );
+}
+
+/** 성별 payload → 플레이어 데이터 → 아바타 ID 순으로 안전하게 보정한다. */
+function resolvePlayerGender(
+  player: Player | null | undefined,
+  explicitGender?: PlayerGender | null,
+): PlayerGender {
+  if (explicitGender === 'boy' || explicitGender === 'girl') return explicitGender;
+  if (player?.gender === 'boy' || player?.gender === 'girl') return player.gender;
+  return playerGenderFromAvatarId(player?.avatarId);
+}
+
+export function getDoctorRescueImage(gender: PlayerGender | null | undefined): string {
+  return gender === 'girl'
+    ? '/illustrations/doctor-rescue-girl.png'
+    : '/illustrations/doctor-rescue-boy.png';
 }
 
 /** 새 결과의 생존·능력 사용 판정이 끝난 순차 연출 큐 */
@@ -106,14 +119,24 @@ export function MorningSequenceModal({
   const onCloseRef = useRef(onClose);
   const sequence = useMemo<ActiveMorningEvent[]>(() => {
     if (activeEvents.length > 0) return sortMorningEvents(activeEvents);
-    return (events.length > 0 ? events : getMorningEvents(result)).map((event) => ({
-      event,
-      actorId: null,
-      targetId: null,
-      targetName: null,
-      success: event === 'DOCTOR_DEFEND',
-    }));
-  }, [activeEvents, events, result]);
+    return (events.length > 0 ? events : getMorningEvents(result)).map((event) => {
+      const targetId =
+        event === 'DOCTOR_DEFEND'
+          ? result?.doctorSavedPlayerId ?? null
+          : event === 'REPORTER_NEWS'
+            ? result?.reporterTargetId ?? null
+            : result?.deadPlayerIds[0] ?? null;
+      const target = targetId ? players[targetId] : null;
+      return {
+        event,
+        actorId: null,
+        targetId,
+        targetName: target?.name ?? null,
+        targetGender: resolvePlayerGender(target),
+        success: event === 'DOCTOR_DEFEND',
+      };
+    });
+  }, [activeEvents, events, players, result]);
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -124,7 +147,12 @@ export function MorningSequenceModal({
   const isMafiaKill = currentType === 'MAFIA_KILL';
   useEffect(() => {
     if (!open || !currentType) return;
-    void playMorningEventSound(currentType);
+    // 특보 단계의 셔터·타자기 효과음은 신문 컴포넌트가 등장할 때 재생한다.
+    if (currentType !== 'REPORTER_NEWS') {
+      void playMorningEventSound(currentType).catch(() => {
+        /* 오디오 실패는 연출을 막지 않는다 */
+      });
+    }
     const timer = window.setTimeout(() => {
       if (eventIndex >= sequence.length - 1) {
         setEventIndex(0);
@@ -136,7 +164,8 @@ export function MorningSequenceModal({
     return () => window.clearTimeout(timer);
   }, [open, currentType, eventIndex, sequence.length]);
 
-  if (!currentEvent || !result) return null;
+  // open 이어도 큐/결과가 없으면 렌더하지 않음 (훅 이후 early return)
+  if (!open || !currentEvent || !result) return null;
 
   const lastEvent = eventIndex >= sequence.length - 1;
   const closePopup = () => {
@@ -153,10 +182,9 @@ export function MorningSequenceModal({
 
   return (
     <AnimatePresence>
-      {open && (
-        <motion.div
-          key={`${currentEvent}-${eventIndex}`}
-          className={`fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/75 px-3 py-8 backdrop-blur-sm sm:py-12 ${isMafiaKill ? 'morning-screen-shake' : ''}`}
+      <motion.div
+          key={`${currentType}-${eventIndex}`}
+          className={`fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/80 px-3 py-8 sm:py-12 ${isMafiaKill ? 'morning-screen-shake' : ''}`}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -181,10 +209,18 @@ export function MorningSequenceModal({
             onClick={(event) => event.stopPropagation()}
           >
             {currentType === 'REPORTER_NEWS' && (
-              <ReporterPanel
-                result={result}
-                players={players}
-                event={currentEvent}
+              <MorningReporterNews
+                targetName={
+                  currentEvent.targetName ??
+                  (currentEvent.targetId ? players[currentEvent.targetId]?.name : null) ??
+                  (result.reporterTargetId ? players[result.reporterTargetId]?.name : null) ??
+                  '학생'
+                }
+                role={
+                  result.reporterTargetRole ??
+                  (currentEvent.targetId ? players[currentEvent.targetId]?.role : null) ??
+                  (result.reporterTargetId ? players[result.reporterTargetId]?.role : null)
+                }
                 onClose={closePopup}
                 onNext={nextOrClose}
                 hasNext={!lastEvent}
@@ -214,12 +250,11 @@ export function MorningSequenceModal({
           <button
             type="button"
             onClick={closePopup}
-            className="fixed bottom-5 right-5 z-[95] rounded-full bg-black/75 px-4 py-2.5 text-xs font-black text-white ring-1 ring-white/25 backdrop-blur-md transition hover:bg-black/90"
+            className="fixed bottom-5 right-5 z-[95] rounded-full bg-black/75 px-4 py-2.5 text-xs font-black text-white ring-1 ring-white/25 transition hover:bg-black/90"
           >
             연출 건너뛰기
           </button>
         </motion.div>
-      )}
     </AnimatePresence>
   );
 }
@@ -264,90 +299,6 @@ function PopupActions({
   );
 }
 
-function ReporterPanel({
-  result,
-  players,
-  event,
-  onClose,
-  onNext,
-  hasNext,
-}: {
-  result: NightResults;
-  players: Record<string, Player>;
-  event: ActiveMorningEvent;
-  onClose: () => void;
-  onNext: () => void;
-  hasNext: boolean;
-}) {
-  const targetId = event.targetId ?? result.reporterTargetId;
-  const target = targetId
-    ? players[targetId]
-    : undefined;
-  const targetName = event.targetName ?? target?.name ?? '학생';
-  const role = result.reporterTargetRole ?? target?.role;
-
-  return (
-    <motion.section
-      className="relative overflow-hidden rounded-2xl border-4 border-red-700 bg-[#fff9e8] text-slate-900 shadow-2xl shadow-black/60"
-      initial={{ y: -20 }}
-      animate={{ y: 0 }}
-    >
-      <motion.div
-        className="absolute inset-x-0 top-0 h-1.5 bg-amber-300"
-        animate={{ opacity: [0.45, 1, 0.45] }}
-        transition={{ duration: 0.65, repeat: Infinity }}
-      />
-      <motion.div
-        className="absolute right-10 top-7 z-10 rounded-full bg-white/80 p-2 text-red-600 shadow-lg"
-        initial={{ opacity: 0, scale: 0.4, rotate: -20 }}
-        animate={{ opacity: [0, 1, 0], scale: [0.4, 1.1, 1], rotate: [-20, 0, 0] }}
-        transition={{ duration: 0.8, repeat: 1 }}
-      >
-        <Camera className="h-6 w-6" />
-      </motion.div>
-      <div className="flex items-center justify-between gap-3 bg-red-700 px-5 py-3 text-white">
-        <p className="flex items-center gap-2 text-sm font-black tracking-wide">
-          <Radio className="h-5 w-5 animate-pulse" />
-          🚨 신문 특보 / 속보!
-        </p>
-        <Newspaper className="h-5 w-5" />
-      </div>
-      <div className="px-5 pb-5 pt-6">
-        <div className="flex items-center justify-center gap-2 text-xs font-black uppercase tracking-[0.2em] text-red-700">
-          <Search className="h-4 w-4" />
-          Reporter&apos;s Exclusive
-          <FileText className="h-4 w-4" />
-        </div>
-        <h2
-          id="morning-result-title"
-          className="mt-3 text-center text-2xl font-black tracking-tight"
-        >
-          기자의 취재 결과
-        </h2>
-        <div className="my-5 border-y-4 border-slate-900 py-5 text-center">
-          <p className="text-sm font-bold text-slate-600">기자의 취재 결과,</p>
-          <p className="mt-2 text-xl font-black leading-tight">
-            <span className="text-red-700">{targetName}</span> 님의 진짜 직업은
-          </p>
-          <p className="mt-2 text-3xl font-black text-red-700">
-            {role ? ROLE_LABELS[role] : '확인된 직업'}
-          </p>
-          <p className="mt-1 text-xl font-black">입니다!</p>
-        </div>
-        <p className="text-center text-xs font-bold text-slate-500">
-          기자의 특보가 모든 학생에게 공개되었습니다.
-        </p>
-      </div>
-      <PopupActions
-        onClose={onClose}
-        onNext={onNext}
-        hasNext={hasNext}
-        tone="news"
-      />
-    </motion.section>
-  );
-}
-
 function MafiaKillPanel({
   result,
   players,
@@ -375,12 +326,14 @@ function MafiaKillPanel({
   const deadRole = targetId
     ? result.deadRoles?.[targetId] ?? (revealRoles && wasKilled ? target?.role : null)
     : null;
+  const fallenGender = dead?.gender ?? playerGenderFromAvatarId(dead?.avatarId);
+  const fallenImage = fallenGender === 'girl'
+    ? '/images/eliminated_girl.png'
+    : '/images/eliminated_boy.png';
 
   return (
     <motion.section
       className="morning-panel-shake relative overflow-hidden rounded-2xl border border-red-300/25 bg-[#0b0a19] text-white shadow-2xl shadow-red-950/60"
-      animate={{ x: [0, -5, 5, -4, 4, 0] }}
-      transition={{ duration: 0.55, delay: 0.18 }}
     >
       <motion.div
         className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-red-600 via-violet-400 to-red-600"
@@ -399,14 +352,31 @@ function MafiaKillPanel({
           Night Alert · Mafia Attack
           <Radio className="h-4 w-4 animate-pulse" />
         </div>
-        <div className="relative mx-auto mt-4 w-full max-w-[280px] overflow-hidden rounded-2xl border border-red-300/30 bg-red-950/60 shadow-[0_0_36px_rgba(220,38,38,0.28)]">
-          <div className="relative flex h-32 items-center justify-center bg-[radial-gradient(circle_at_50%_45%,rgba(127,29,29,0.85),rgba(11,10,25,0.92)_70%)]">
-            <CharacterAvatar
-              avatarId={target?.avatarId ?? dead?.avatarId}
-              isAlive={!wasKilled}
-              size={108}
-              className="relative z-10"
-            />
+        <div className="relative mx-auto mt-4 w-full max-w-[360px] overflow-hidden rounded-2xl border border-red-300/30 bg-red-950/60 shadow-[0_0_36px_rgba(220,38,38,0.28)]">
+          <div className="relative flex h-44 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_50%_45%,rgba(127,29,29,0.85),rgba(11,10,25,0.92)_70%)]">
+            {wasKilled && dead ? (
+              <motion.img
+                src={fallenImage}
+                alt={`${deadName} 쓰러진 캐릭터 일러스트`}
+                className="absolute inset-0 h-full w-full object-cover object-center drop-shadow-[0_8px_14px_rgba(0,0,0,0.8)]"
+                style={{ filter: 'grayscale(0.72) sepia(0.28) brightness(0.72) contrast(1.08)' }}
+                initial={{ opacity: 0, scale: 1.05, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                transition={{ duration: 0.8, ease: 'easeOut' }}
+                decoding="async"
+                draggable={false}
+              />
+            ) : (
+              <CharacterAvatar
+                avatarId={target?.avatarId ?? dead?.avatarId}
+                isAlive={!wasKilled}
+                size={108}
+                className="relative z-10"
+              />
+            )}
+            {wasKilled && dead && (
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#090714]/75 via-transparent to-red-950/20" />
+            )}
             <div className="morning-crosshair-lock pointer-events-none absolute left-1/2 top-1/2 z-20 h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-red-200/90 shadow-[0_0_18px_rgba(248,113,113,0.7)]">
               <span className="absolute left-1/2 top-0 h-5 w-px -translate-x-1/2 bg-red-100" />
               <span className="absolute bottom-0 left-1/2 h-5 w-px -translate-x-1/2 bg-red-100" />
@@ -486,6 +456,10 @@ function DoctorDefendPanel({
   const targetName = event.targetName ??
     (event.targetId ? players[event.targetId]?.name : null) ??
     '학생';
+  const targetPlayer = event.targetId ? players[event.targetId] : null;
+  const targetGender = resolvePlayerGender(targetPlayer, event.targetGender);
+  const targetGenderLabel = targetGender === 'girl' ? '여학생' : '남학생';
+  const rescueImage = getDoctorRescueImage(targetGender);
   const particles = [
     { x: 8, y: 72, delay: 0 },
     { x: 17, y: 48, delay: 0.25 },
@@ -500,22 +474,27 @@ function DoctorDefendPanel({
   return (
     <motion.section className="overflow-hidden rounded-2xl border border-emerald-300/30 bg-emerald-950/95 text-white shadow-2xl shadow-emerald-950/60">
       <div className="relative h-56 overflow-hidden">
-        <Image
-          src="/illustrations/doctor-defense-morning.png"
-          alt="의사의 보호막이 마피아의 공격을 막아낸 아침 장면"
-          fill
-          sizes="(max-width: 640px) 90vw, 384px"
-          className="object-cover object-center"
-          priority
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={rescueImage}
+          alt={`의사가 ${targetGenderLabel} 시민을 마을에서 구조한 아침 장면`}
+          className="absolute inset-0 h-full w-full object-cover object-center"
+          decoding="async"
+          draggable={false}
+          onError={(event) => {
+            // 치료 이미지가 누락된 배포본에서도 기본 남학생 구조 장면으로 안전하게 표시한다.
+            event.currentTarget.onerror = null;
+            event.currentTarget.src = '/illustrations/doctor-rescue-boy.png';
+          }}
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-indigo-950/55 via-transparent to-emerald-950/95" />
+        <div className="absolute inset-0 bg-gradient-to-b from-slate-950/55 via-transparent to-emerald-950/95" />
         <motion.div
-          className="absolute left-1/2 top-[54%] -translate-x-1/2 -translate-y-1/2 text-cyan-100"
-          initial={{ scale: 0.6, opacity: 0 }}
-          animate={{ scale: [0.9, 1.08, 1], opacity: [0, 1, 1] }}
+          className="absolute left-1/2 top-[72%] -translate-x-1/2 -translate-y-1/2 rounded-full border border-emerald-100/60 bg-emerald-950/45 p-2 text-emerald-100 backdrop-blur-sm"
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: [0.9, 1.04, 1], opacity: [0, 1, 1] }}
           transition={{ duration: 0.8, ease: 'easeOut' }}
         >
-          <ShieldCheck className="h-16 w-16 drop-shadow-[0_0_18px_rgba(103,232,249,0.9)]" strokeWidth={1.4} />
+          <HeartPulse className="h-7 w-7 drop-shadow-[0_0_12px_rgba(167,243,208,0.85)]" strokeWidth={1.8} />
         </motion.div>
         <div className="absolute inset-x-3 top-3 text-center">
           <p
@@ -523,8 +502,8 @@ function DoctorDefendPanel({
             className="text-balance text-lg font-black leading-tight text-white drop-shadow-[0_2px_8px_rgba(2,44,34,0.9)]"
           >
             {defended
-              ? '의사가 마피아의 공격을 완벽하게 막아냈습니다!'
-              : '의사의 보호막이 공격 대상을 감쌌습니다.'}
+              ? '의사가 시민을 무사히 살려냈습니다!'
+              : '의사가 학생의 상태를 확인했습니다.'}
           </p>
         </div>
         {particles.map((particle) => (
@@ -555,13 +534,16 @@ function DoctorDefendPanel({
         </p>
         <p className="mt-2 text-xs text-cyan-100/75">
           {defended
-            ? '모두 무사히 아침을 맞았습니다. 보호막이 어둠을 밀어냈습니다!'
-            : '의사의 능력이 짧게 발동했습니다.'}
+            ? `의사가 ${targetGenderLabel} 시민의 상태를 확인하고 응급 처치를 마쳤습니다.`
+            : '의사가 치료 대상의 상태를 확인했습니다.'}
+        </p>
+        <p className="mt-2 text-[11px] font-bold text-emerald-200/75">
+          구조 대상: {targetGenderLabel} · {targetName}
         </p>
         <div className="mt-3 flex items-center justify-center gap-1 text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-300/70">
-          <Sparkles className="h-3 w-3" />
-          Doctor&apos;s Barrier
-          <Sparkles className="h-3 w-3" />
+          <HeartPulse className="h-3 w-3" />
+          Medical Rescue Complete
+          <HeartPulse className="h-3 w-3" />
         </div>
       </div>
       <PopupActions

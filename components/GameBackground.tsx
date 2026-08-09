@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo } from 'react';
-import Image from 'next/image';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { Theme } from '@/types/game';
 
@@ -78,24 +77,20 @@ function PixelCharacter({ index }: { index: number }) {
         x: [0, xDrift, 0],
         scale: 1,
       }}
-      exit={{ opacity: 0, y: -20, scale: 0.5 }}
       transition={{
-        opacity: { duration: 0.45 },
-        scale: { type: 'spring', stiffness: 220, damping: 16 },
-        y: { duration, repeat: Infinity, ease: 'easeInOut', delay },
-        x: { duration: duration * 1.35, repeat: Infinity, ease: 'easeInOut', delay },
+        opacity: { duration: 0.6, delay },
+        y: { duration, delay, repeat: Infinity, ease: 'easeInOut' },
+        x: {
+          duration: duration * 1.2,
+          delay,
+          repeat: Infinity,
+          ease: 'easeInOut',
+        },
       }}
     >
-      <svg
-        viewBox="0 0 16 16"
-        width="100%"
-        height="100%"
-        style={{ imageRendering: 'pixelated' }}
-        aria-hidden
-      >
-        <rect x="4" y="1" width="8" height="2" fill={colors.hat} />
-        <rect x="3" y="3" width="10" height="1" fill={colors.hat} />
-        <rect x="4" y="4" width="8" height="5" fill={colors.body} />
+      <svg viewBox="0 0 16 16" width="100%" height="100%" aria-hidden>
+        <rect x="5" y="1" width="6" height="2" fill={colors.hat} />
+        <rect x="4" y="3" width="8" height="5" fill={colors.body} />
         <rect x="5" y="5" width="2" height="2" fill="#1a1a1a" />
         <rect x="9" y="5" width="2" height="2" fill="#1a1a1a" />
         <rect x="6" y="7" width="4" height="1" fill="#c4785a" />
@@ -129,16 +124,6 @@ function MistLayer({ active }: { active: boolean }) {
             animate={{ opacity: [0.55, 0.85, 0.6] }}
             transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
           />
-          <motion.div
-            className="absolute -inset-x-[20%] inset-y-0"
-            style={{
-              background:
-                'linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent)',
-              filter: 'blur(28px)',
-            }}
-            animate={{ x: ['-15%', '15%', '-15%'] }}
-            transition={{ duration: 12, repeat: Infinity, ease: 'easeInOut' }}
-          />
         </motion.div>
       )}
     </AnimatePresence>
@@ -168,35 +153,36 @@ export default function GameBackground({
       className={'relative h-full w-full overflow-hidden bg-black ' + className}
       aria-hidden={!children}
     >
-      <AnimatePresence mode="sync">
+      {/* mode=wait: 대형 PNG 동시 디코딩으로 아침 전환 시 렌더러가 죽는 것을 방지 */}
+      <AnimatePresence mode="wait">
         <motion.div
           key={sceneKey}
           className="absolute inset-0"
-          initial={{ opacity: 0, scale: 1.04 }}
-          animate={{ opacity: 1, scale: 1 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 1.6, ease: [0.4, 0, 0.2, 1] }}
+          transition={{ duration: 0.7, ease: 'easeInOut' }}
         >
-          <Image
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
             src={scene.src}
             alt={scene.alt}
-            fill
-            priority
-            quality={90}
-            sizes="100vw"
-            className="object-cover"
+            className="h-full w-full object-cover"
+            decoding="async"
+            fetchPriority={isNight ? 'high' : 'auto'}
+            draggable={false}
           />
         </motion.div>
       </AnimatePresence>
 
-      <AnimatePresence mode="sync">
+      <AnimatePresence mode="wait">
         <motion.div
           key={theme + '-' + gameState + '-overlay'}
           className={'absolute inset-0 z-[1] ' + overlayClass}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 1.2, ease: 'easeInOut' }}
+          transition={{ duration: 0.6, ease: 'easeInOut' }}
         />
       </AnimatePresence>
 
@@ -210,7 +196,7 @@ export default function GameBackground({
             initial={{ opacity: 0.75 }}
             animate={{ opacity: 0 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 2.2, ease: 'easeOut' }}
+            transition={{ duration: 1.4, ease: 'easeOut' }}
           />
         )}
       </AnimatePresence>

@@ -142,6 +142,10 @@ export async function playMorningEventSound(event: MorningEvent) {
       REPORTER_NEWS: [
         { freq: 1850, offset: 0, duration: 0.07, type: 'square' },
         { freq: 1250, offset: 0.09, duration: 0.1, type: 'square' },
+        { freq: 920, offset: 0.34, duration: 0.035, type: 'square' },
+        { freq: 1040, offset: 0.41, duration: 0.035, type: 'square' },
+        { freq: 920, offset: 0.48, duration: 0.035, type: 'square' },
+        { freq: 1040, offset: 0.55, duration: 0.035, type: 'square' },
       ],
       MAFIA_KILL: [
         { freq: 120, offset: 0, duration: 0.24, type: 'sawtooth' },

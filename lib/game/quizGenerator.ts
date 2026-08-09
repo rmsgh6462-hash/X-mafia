@@ -309,4 +309,4 @@ export const QUIZ_MODE_LABELS: Record<QuizMode, string> = {
   CUSTOM: '교사 직접 출제',
 };
 
-export const TIME_LIMIT_PRESETS = [30, 45, 60] as const;
+export const TIME_LIMIT_PRESETS = [5, 10, 15, 30, 45, 60] as const;

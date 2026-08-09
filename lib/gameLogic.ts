@@ -5,6 +5,7 @@ import type {
   Player,
   Role,
 } from '@/types/game';
+import { playerGenderFromAvatarId } from '@/lib/game/avatars';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import {
   buildNightDeathAnnouncement,
@@ -12,7 +13,7 @@ import {
 } from '@/lib/game/room';
 import { evaluateGameEnd } from '@/lib/game/winConditions';
 
-export { evaluateGameEnd } from '@/lib/game/winConditions';
+export { evaluateGameEnd, checkGameOver } from '@/lib/game/winConditions';
 
 function playersOf(room: GameRoom): Player[] {
   return Object.values(room.players ?? {});
@@ -212,11 +213,13 @@ export function resolveNight(
   );
   if (mafiaActor && killTargets.length > 0) {
     const targetId = killTargets[0] ?? mafiaActor.nightTarget;
+    const target = targetId ? nextRoom.players[targetId] : null;
     activeEvents.push({
       event: 'MAFIA_KILL',
       actorId: mafiaActor.id,
       targetId,
-      targetName: targetId ? nextRoom.players[targetId]?.name ?? null : null,
+      targetName: target?.name ?? null,
+      targetGender: target?.gender ?? playerGenderFromAvatarId(target?.avatarId),
     });
   }
 
@@ -229,11 +232,13 @@ export function resolveNight(
       p.nightTarget === doctorSave.selectedId,
   );
   if (doctorActor && doctorSave.selectedId) {
+    const target = nextRoom.players[doctorSave.selectedId];
     activeEvents.push({
       event: 'DOCTOR_DEFEND',
       actorId: doctorActor.id,
       targetId: doctorSave.selectedId,
-      targetName: nextRoom.players[doctorSave.selectedId]?.name ?? null,
+      targetName: target?.name ?? null,
+      targetGender: target?.gender ?? playerGenderFromAvatarId(target?.avatarId),
       success: isDoctorDefended,
     });
   }
@@ -247,11 +252,13 @@ export function resolveNight(
       p.nightTarget === reporter.targetId,
   );
   if (reporterActor && reporter.news && reporter.targetId) {
+    const target = nextRoom.players[reporter.targetId];
     activeEvents.push({
       event: 'REPORTER_NEWS',
       actorId: reporterActor.id,
       targetId: reporter.targetId,
-      targetName: nextRoom.players[reporter.targetId]?.name ?? null,
+      targetName: target?.name ?? null,
+      targetGender: target?.gender ?? playerGenderFromAvatarId(target?.avatarId),
     });
   }
 

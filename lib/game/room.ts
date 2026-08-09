@@ -10,7 +10,11 @@
   type Unsubscribe,
 } from 'firebase/database';
 import { getFirebaseDatabase } from '@/lib/firebase';
-import { isAvatarId, takenAvatarIds } from '@/lib/game/avatars';
+import {
+  isAvatarId,
+  playerGenderFromAvatarId,
+  takenAvatarIds,
+} from '@/lib/game/avatars';
 import {
   buildMafiaMissionState,
   createNightQuizState,
@@ -66,6 +70,7 @@ export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
     maxRounds: 3,
     currentRound: 0,
     winnerSide: null,
+    victoryTeam: null,
     voteRevoteCandidates: null,
     dayVoteResult: null,
     createdAt: Date.now(),
@@ -120,14 +125,38 @@ export async function saveRoom(room: GameRoom): Promise<void> {
   }
 }
 
-/** 교사: 게임 종료 — 학생 기기에서 퇴장 처리 */
+/** 교사: 게임 종료 — 모든 클라이언트에 최종 결과 화면을 표시 */
 export function endGameRoom(room: GameRoom): GameRoom {
   return {
     ...room,
     gameState: 'ENDED',
     winnerSide: room.winnerSide ?? null,
+    victoryTeam: room.victoryTeam ?? room.winnerSide ?? null,
     matchEndsAt: null,
     voteEndsAt: null,
+  };
+}
+
+/** 교사: 결과 화면에서 방을 유지한 채 같은 학생들로 새 게임 준비 */
+export function restartGameRoom(room: GameRoom): GameRoom {
+  const players: Record<string, Player> = {};
+  Object.values(room.players ?? {}).forEach((player) => {
+    players[player.id] = {
+      ...player,
+      role: null,
+      isAlive: true,
+      nightTarget: null,
+      partnerId: null,
+      hasSelfHealed: false,
+    };
+  });
+
+  const fresh = createEmptyRoom(room.theme, room.pin);
+  return {
+    ...fresh,
+    players,
+    maxRounds: room.maxRounds > 0 ? room.maxRounds : fresh.maxRounds,
+    createdAt: room.createdAt,
   };
 }
 
@@ -171,6 +200,7 @@ export function normalizeGameRoom(room: GameRoom): GameRoom {
       nightTarget: p.nightTarget ?? null,
       partnerId: p.partnerId ?? null,
       avatarId: p.avatarId ?? 'M0',
+      gender: p.gender ?? playerGenderFromAvatarId(p.avatarId ?? 'M0'),
       hasSelfHealed: p.hasSelfHealed === true,
     };
   });
@@ -200,6 +230,7 @@ export function normalizeGameRoom(room: GameRoom): GameRoom {
     maxRounds: Math.max(1, room.maxRounds ?? 3),
     currentRound: Math.max(0, room.currentRound ?? 0),
     winnerSide: room.winnerSide ?? null,
+    victoryTeam: room.victoryTeam ?? room.winnerSide ?? null,
     voteRevoteCandidates: room.voteRevoteCandidates ?? null,
     dayVoteResult: room.dayVoteResult ?? null,
     ghostChat: room.ghostChat ?? {},
@@ -303,6 +334,7 @@ export function startAssignedGame(room: GameRoom): GameRoom {
     currentRound: 0,
     maxRounds,
     winnerSide: null,
+    victoryTeam: null,
   };
 }
 
@@ -349,6 +381,7 @@ function startGameWithRoles(room: GameRoom, deck: Role[]): GameRoom {
     currentRound: 0,
     maxRounds,
     winnerSide: null,
+    victoryTeam: null,
   };
 }
 
@@ -1037,6 +1070,7 @@ export async function joinRoom(
       nightTarget: null,
       partnerId: null,
       avatarId,
+      gender: playerGenderFromAvatarId(avatarId),
       hasSelfHealed: false,
     };
 

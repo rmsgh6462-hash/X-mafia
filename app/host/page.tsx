@@ -16,6 +16,7 @@ import {
   Vote,
   Volume2,
   HeartHandshake,
+  Monitor,
   Plus,
   Square,
 } from 'lucide-react';
@@ -37,14 +38,14 @@ import {
   getMorningEvents,
   MorningSequenceModal,
 } from '@/components/play/MorningSequenceModal';
+import { GameResultPanel } from '@/components/play/GameResultPanel';
 import {
   RoleBoardPanel,
-  RoleBoardToggle,
 } from '@/components/host/RoleBoardPanel';
 import { PlayerRoster } from '@/components/play/PlayerRoster';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { isFirebaseConfigured } from '@/lib/firebase';
-import { firstFreeAvatarId } from '@/lib/game/avatars';
+import { firstFreeAvatarId, playerGenderFromAvatarId } from '@/lib/game/avatars';
 import { playPhaseBgm, speak, speakPhase, stopAllAudio } from '@/lib/game/audio';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import {
@@ -71,6 +72,7 @@ import {
   resolveDayVote,
   resolveMafiaMissionState,
   resolveNightQuizTimeout,
+  restartGameRoom,
   saveRoom,
   setVoteTieResolution,
   setRevealDeathRoles,
@@ -241,9 +243,7 @@ export default function HostPage() {
     void playPhaseBgm(room.gameState);
     if (room.gameState === 'ENDED') {
       if (room.winnerSide === 'MAFIA') {
-        speak(
-          '총 라운드가 모두 끝났습니다. 마피아 팀의 최종 승리입니다.',
-        );
+        speak('마피아 팀의 최종 승리입니다.');
       } else if (room.winnerSide === 'CITIZEN') {
         speak('마피아를 모두 찾아냈습니다. 시민 팀의 승리입니다.');
       } else {
@@ -301,14 +301,20 @@ export default function HostPage() {
       return;
     }
     if (morningActiveEvents.length === 0 && morningEvents.length === 0) return;
-    const key = JSON.stringify({
-      roomId: room.roomId,
-      activeEvents: morningActiveEvents,
-      result: room.nightResults,
-    });
+    const key = [
+      room.roomId,
+      room.currentRound,
+      morningActiveEvents.map((e) => e.event).join(','),
+      morningEvents.join(','),
+      (room.nightResults?.deadPlayerIds ?? []).join(','),
+    ].join('|');
     if (seenMorningSequenceRef.current === key) return;
     seenMorningSequenceRef.current = key;
-    setMorningSequenceOpen(true);
+    // 배경 전환이 끝난 뒤 연출을 열어 메모리 피크를 줄인다
+    const timer = window.setTimeout(() => {
+      setMorningSequenceOpen(true);
+    }, 350);
+    return () => window.clearTimeout(timer);
   }, [room, morningActiveEvents, morningEvents]);
 
   const enableAudio = useCallback(async () => {
@@ -389,26 +395,42 @@ export default function HostPage() {
   const handleResolveNight = async () => {
     if (!room) return;
     setBusy(true);
-    const next = resolveNight(room);
-    await commitRoom(next);
-    const deadCount = next.nightResults?.deadPlayerIds.length ?? 0;
-    const lines = next.nightResults?.deathAnnouncements;
-    if (lines && lines.length > 0) {
-      speak(lines.join(' '));
-    } else {
-      speak(
-        deadCount === 0
-          ? '아침이 되었습니다. 지난밤 희생자는 없었습니다.'
-          : `아침이 되었습니다. 지난밤 ${deadCount}명이 희생되었습니다.`,
+    try {
+      const next = resolveNight(room);
+      await commitRoom(next);
+      const deadCount = next.nightResults?.deadPlayerIds.length ?? 0;
+      const lines = next.nightResults?.deathAnnouncements;
+      if (lines && lines.length > 0) {
+        speak(lines.join(' '));
+      } else if (next.gameState === 'ENDED') {
+        speak(
+          next.winnerSide === 'CITIZEN'
+            ? '마피아를 모두 찾아냈습니다. 시민 팀의 승리입니다.'
+            : '마피아 팀의 최종 승리입니다.',
+        );
+      } else {
+        speak(
+          deadCount === 0
+            ? '아침이 되었습니다. 지난밤 희생자는 없었습니다.'
+            : `아침이 되었습니다. 지난밤 ${deadCount}명이 희생되었습니다.`,
+        );
+      }
+    } catch (e) {
+      console.error('resolveNight failed', e);
+      setError(
+        e instanceof Error
+          ? `아침 발표 실패: ${e.message}`
+          : '아침 발표 처리 중 오류가 발생했습니다.',
       );
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   };
 
   const handleEndGame = async () => {
     if (!room) return;
     const ok = window.confirm(
-      '게임을 종료할까요? 모든 학생 화면이 퇴장되며, 이 방은 닫힙니다.',
+      '게임을 종료하고 최종 결과 화면을 표시할까요?',
     );
     if (!ok) return;
     setBusy(true);
@@ -416,23 +438,45 @@ export default function HostPage() {
       const ended = endGameRoom(room);
       await commitRoom(ended);
       speak('게임이 종료되었습니다.');
-      // 학생들이 ENDED를 받을 시간을 준 뒤 방 삭제
-      window.setTimeout(() => {
-        void (async () => {
-          try {
-            await deleteRoom(ended.roomId);
-          } catch (e) {
-            console.warn(e);
-          }
-          setRoom(null);
-          roomIdRef.current = null;
-          prevStateRef.current = null;
-          setBusy(false);
-        })();
-      }, 1200);
     } catch (e) {
       console.warn(e);
       setError('게임 종료에 실패했습니다.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRestartGame = async () => {
+    if (!room) return;
+    setBusy(true);
+    try {
+      await commitRoom(restartGameRoom(room));
+      speak('방을 유지한 채 새 게임을 준비합니다.');
+    } catch (e) {
+      console.warn(e);
+      setError('게임 재시작에 실패했습니다.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDeleteRoom = async () => {
+    if (!room) return;
+    const ok = window.confirm(
+      '방을 삭제하고 모든 참가자를 내보낼까요? 이 작업은 되돌릴 수 없습니다.',
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await deleteRoom(room.roomId);
+      setRoom(null);
+      roomIdRef.current = null;
+      prevStateRef.current = null;
+      speak('방을 삭제했습니다.');
+    } catch (e) {
+      console.warn(e);
+      setError('방 삭제에 실패했습니다.');
+    } finally {
       setBusy(false);
     }
   };
@@ -479,10 +523,52 @@ export default function HostPage() {
                 PIN {formatPin(room.pin)}
               </span>
             )}
-            <span className="inline-flex items-center gap-1.5 rounded-md bg-black/35 px-3 py-1.5 backdrop-blur-sm">
-              <Users className="h-4 w-4" />
-              {playerCount}명
-            </span>
+            {room && (
+              <button
+                type="button"
+                onClick={() => {
+                  const displayWindow = window.open(
+                    `/host/display?roomId=${encodeURIComponent(room.roomId)}`,
+                    '_blank',
+                    'width=1920,height=1080',
+                  );
+                  if (!displayWindow) {
+                    setError('서브 모니터 창이 차단되었습니다. 브라우저의 팝업을 허용해 주세요.');
+                    return;
+                  }
+                  displayWindow.focus();
+                }}
+                title="새 창을 빔프로젝터 쪽 모니터로 옮긴 뒤 F11을 누르면 전체 화면으로 볼 수 있습니다."
+                aria-label="서브 모니터 화면 열기"
+                className="inline-flex items-center gap-1.5 rounded-md bg-sky-500/85 px-3 py-1.5 font-bold text-white shadow-lg transition hover:bg-sky-400"
+              >
+                <Monitor className="h-4 w-4" />
+                <span className="hidden sm:inline">서브 모니터</span>
+                <span className="sm:hidden">화면</span>
+              </button>
+            )}
+            {room ? (
+              <button
+                type="button"
+                onClick={() => setRoleBoardOpen((v) => !v)}
+                title="역할 현황 보기"
+                aria-pressed={roleBoardOpen}
+                className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 backdrop-blur-sm transition ${
+                  roleBoardOpen
+                    ? 'bg-amber-400/90 font-bold text-stone-900 ring-1 ring-amber-200/80'
+                    : 'bg-black/35 hover:bg-white/15'
+                }`}
+              >
+                <Users className="h-4 w-4" />
+                {playerCount}명
+                <span className="text-[10px] font-bold opacity-70">역할</span>
+              </button>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-black/35 px-3 py-1.5 backdrop-blur-sm">
+                <Users className="h-4 w-4" />
+                {playerCount}명
+              </span>
+            )}
             {!audioReady ? (
               <button
                 type="button"
@@ -752,33 +838,17 @@ export default function HostPage() {
                 onDismiss={() => void runAction(dismissMorningResult)}
               />
             ) : room.gameState === 'ENDED' ? (
-              <StagePanel key="ended" title="게임 종료">
-                <p className="text-4xl font-black md:text-5xl">
-                  {room.winnerSide === 'MAFIA'
-                    ? '마피아 팀 승리'
-                    : room.winnerSide === 'CITIZEN'
-                      ? '시민 팀 승리'
-                      : '게임 종료'}
-                </p>
-                <p className="mt-3 text-lg text-white/75">
-                  {room.winnerSide === 'MAFIA'
-                    ? `총 ${room.maxRounds}라운드 동안 마피아를 모두 찾아내지 못했습니다.`
-                    : room.winnerSide === 'CITIZEN'
-                      ? '생존한 마피아가 없습니다.'
-                      : '선생님이 게임을 종료했습니다.'}
-                </p>
-                <p className="mt-2 font-mono text-sm text-amber-200">
-                  ROUND {room.currentRound} / {room.maxRounds}
-                </p>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void handleEndGame()}
-                  className="mt-8 rounded-xl bg-amber-400 px-6 py-3 text-sm font-black text-stone-900"
-                >
-                  방 닫기
-                </button>
-              </StagePanel>
+              <GameResultPanel
+                key="ended"
+                winnerSide={room.winnerSide ?? room.victoryTeam}
+                players={room.players}
+                round={room.currentRound}
+                maxRounds={room.maxRounds}
+                isHost
+                busy={busy}
+                onRestart={() => void handleRestartGame()}
+                onNewGame={() => void handleDeleteRoom()}
+              />
             ) : (
               <StagePanel key="day" title={STATE_LABELS[room.gameState]}>
                 {room.dayVoteResult ? (
@@ -850,11 +920,6 @@ export default function HostPage() {
                     : ''}
               </p>
               <div className="flex items-center gap-2">
-                <RoleBoardToggle
-                  open={roleBoardOpen}
-                  disabled={!room}
-                  onToggle={() => setRoleBoardOpen((v) => !v)}
-                />
                 {!audioReady && (
                   <button
                     type="button"
@@ -908,6 +973,7 @@ export default function HostPage() {
                             nightTarget: null,
                             partnerId: null,
                             avatarId,
+                            gender: playerGenderFromAvatarId(avatarId),
                           },
                         },
                       };
@@ -1308,8 +1374,8 @@ function MorningResultStage({
                 return (
                   <motion.li
                     key={id}
-                    initial={{ opacity: 0, x: -24, filter: 'blur(6px)' }}
-                    animate={{ opacity: 1, x: 0, filter: 'blur(0px)' }}
+                    initial={{ opacity: 0, x: -24 }}
+                    animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: 0.35 + index * 0.45, duration: 0.55 }}
                     className="flex items-center justify-between rounded-xl bg-red-950/55 px-5 py-4 ring-1 ring-red-400/35"
                   >
