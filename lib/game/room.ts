@@ -10,7 +10,13 @@ import {
 } from 'firebase/database';
 import { getFirebaseDatabase } from '@/lib/firebase';
 import { isAvatarId, takenAvatarIds } from '@/lib/game/avatars';
-import { generateMafiaHint } from '@/lib/game/hints';
+import {
+  buildMafiaMissionState,
+  createNightQuizState,
+  emptyMafiaMissionState,
+  getNightQuizStats,
+  isAnswerCorrect,
+} from '@/lib/game/missions';
 import {
   buildRoleDeck,
   buildRoleDeckFromCounts,
@@ -19,26 +25,16 @@ import {
 import type {
   GameRoom,
   GhostChatMessage,
+  MafiaMissionAssignConfig,
   MatchChatMessage,
   MissionOutcome,
+  MissionSubmission,
+  NightQuizConfig,
   Player,
   Role,
   Theme,
   WinnerSide,
 } from '@/types/game';
-
-const MISSION_POOL = [
-  { description: '교실을 한 바퀴 돌며 하이파이브 10회 하기', timeLimitSec: 90 },
-  { description: '짝과 함께 사자성어 3개 말하기', timeLimitSec: 60 },
-  { description: '다 함께 숨소리만으로 박수 박자 맞추기', timeLimitSec: 45 },
-  { description: '칠판에 마을(학교) 지도 그리기', timeLimitSec: 120 },
-];
-
-const MAFIA_MISSION_POOL = [
-  '선생님 몰래 지정된 물건 옮기기',
-  '토론 중 특정 단어를 3회 사용하기',
-  '다른 마피아와 눈빛으로만 신호 주고받기',
-];
 
 export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
   return {
@@ -47,16 +43,21 @@ export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
     gameState: 'WAITING',
     theme,
     players: {},
+    nightQuizState: null,
+    mafiaMissionState: emptyMafiaMissionState(),
+    pendingMafiaNightBuff: false,
+    isMafiaBuffActive: false,
     currentCitizenMission: null,
     mafiaMission: null,
-    isMafiaBuffActive: false,
+    missionSubmissions: {},
+    missionPeerMap: {},
+    missionOutcome: null,
     currentHint: null,
     nightResults: null,
     gmEvent: null,
     votes: {},
     matchEndsAt: null,
     voteEndsAt: null,
-    missionOutcome: null,
     dayVoteResult: null,
     createdAt: Date.now(),
     ghostChat: {},
@@ -185,11 +186,16 @@ export function startAssignedGame(room: GameRoom): GameRoom {
     votes: {},
     matchEndsAt: null,
     voteEndsAt: null,
+    nightQuizState: null,
+    mafiaMissionState: emptyMafiaMissionState(),
+    pendingMafiaNightBuff: false,
+    isMafiaBuffActive: false,
     missionOutcome: null,
     mafiaMission: null,
+    missionSubmissions: {},
+    missionPeerMap: {},
     nightResults: null,
     currentHint: null,
-    isMafiaBuffActive: false,
     gmEvent: null,
     currentCitizenMission: null,
     dayVoteResult: null,
@@ -215,11 +221,16 @@ function startGameWithRoles(room: GameRoom, deck: Role[]): GameRoom {
     votes: {},
     matchEndsAt: null,
     voteEndsAt: null,
+    nightQuizState: null,
+    mafiaMissionState: emptyMafiaMissionState(),
+    pendingMafiaNightBuff: false,
+    isMafiaBuffActive: false,
     missionOutcome: null,
     mafiaMission: null,
+    missionSubmissions: {},
+    missionPeerMap: {},
     nightResults: null,
     currentHint: null,
-    isMafiaBuffActive: false,
     gmEvent: null,
     currentCitizenMission: null,
     dayVoteResult: null,
@@ -279,73 +290,228 @@ export function startMatchPhase(room: GameRoom): GameRoom {
 }
 
 export function startMissionPhase(room: GameRoom): GameRoom {
-  const mission = MISSION_POOL[Math.floor(Math.random() * MISSION_POOL.length)];
-  const mafiaDesc =
-    MAFIA_MISSION_POOL[Math.floor(Math.random() * MAFIA_MISSION_POOL.length)];
+  // DAY_MISSION은 더 이상 사용하지 않음 — 밤 퀴즈로 대체
+  return room;
+}
 
+/** 교사: 마피아 미션만 부여 (자동 진행 아님) */
+export function assignMafiaMission(
+  room: GameRoom,
+  config: MafiaMissionAssignConfig,
+): GameRoom {
   return {
     ...room,
-    gameState: 'DAY_MISSION',
-    matchEndsAt: null,
-    voteEndsAt: null,
-    missionOutcome: 'PENDING',
-    currentCitizenMission: mission,
-    mafiaMission: { description: mafiaDesc, outcome: 'PENDING' },
-    // 이번 미션 라운드부터 다시 판정 (이전 버프 초기화)
-    isMafiaBuffActive: false,
+    mafiaMissionState: buildMafiaMissionState(room, config),
   };
 }
 
-function isMissionSideDone(outcome: MissionOutcome): boolean {
-  return outcome === 'SUCCESS' || outcome === 'FAIL';
-}
-
-function finishMissionIfReady(room: GameRoom): GameRoom {
-  const citizenDone = isMissionSideDone(room.missionOutcome);
-  const mafiaDone = isMissionSideDone(room.mafiaMission?.outcome ?? null);
-  if (!citizenDone || !mafiaDone) return room;
-  return {
-    ...room,
-    gameState: 'DAY_TALK',
-  };
-}
-
-/** 시민 미션 성공/실패 — 성공 시 마피아 힌트 공개 */
-export function resolveCitizenMission(
+/** 교사: 마피아 미션 수동 판정 */
+export function resolveMafiaMissionState(
   room: GameRoom,
   outcome: Exclude<MissionOutcome, 'PENDING' | null>,
 ): GameRoom {
-  const next: GameRoom = {
+  if (!room.mafiaMissionState?.active) return room;
+  return {
     ...room,
-    missionOutcome: outcome,
-    currentHint:
-      outcome === 'SUCCESS' ? generateMafiaHint(room) : room.currentHint,
+    mafiaMissionState: {
+      ...room.mafiaMissionState,
+      outcome,
+      active: false,
+    },
+    pendingMafiaNightBuff:
+      outcome === 'SUCCESS' ? true : room.pendingMafiaNightBuff,
   };
-  return finishMissionIfReady(next);
 }
 
-/** 마피아 미션 성공/실패 — 성공 시 밤 멀티킬 버프 (각자 1명, 서로 살해 가능) */
-export function resolveMafiaMission(
+function markMafiaMissionSuccess(room: GameRoom): GameRoom {
+  if (!room.mafiaMissionState?.active) return room;
+  if (room.mafiaMissionState.outcome === 'SUCCESS') return room;
+  return {
+    ...room,
+    mafiaMissionState: {
+      ...room.mafiaMissionState,
+      outcome: 'SUCCESS',
+      active: false,
+    },
+    pendingMafiaNightBuff: true,
+  };
+}
+
+/** 미제출자를 시간초과 오답으로 표시 */
+export function markUnansweredAsTimeout(room: GameRoom): GameRoom {
+  const quiz = room.nightQuizState;
+  if (!quiz) return room;
+
+  const alive = Object.values(room.players ?? {}).filter((p) => p.isAlive);
+  const submissions = { ...quiz.submissions };
+  let changed = false;
+  let disruptAdds = 0;
+
+  alive.forEach((p) => {
+    if (submissions[p.id]) return;
+    changed = true;
+    submissions[p.id] = {
+      playerId: p.id,
+      answer: '(시간초과)',
+      correct: false,
+      submittedAt: Date.now(),
+    };
+    if (p.role === 'MAFIA') disruptAdds += 1;
+  });
+
+  if (!changed) return room;
+
+  let mafiaMissionState = room.mafiaMissionState;
+  if (
+    mafiaMissionState?.active &&
+    mafiaMissionState.type === 'NIGHT_DISRUPT' &&
+    mafiaMissionState.outcome === 'PENDING' &&
+    disruptAdds > 0
+  ) {
+    const progress =
+      (mafiaMissionState.disruptProgress ?? 0) + disruptAdds;
+    const target = mafiaMissionState.disruptTargetCount ?? 3;
+    mafiaMissionState = {
+      ...mafiaMissionState,
+      disruptProgress: progress,
+    };
+    if (progress >= target) {
+      return markMafiaMissionSuccess({
+        ...room,
+        nightQuizState: { ...quiz, submissions },
+        mafiaMissionState,
+      });
+    }
+  }
+
+  return {
+    ...room,
+    nightQuizState: { ...quiz, submissions },
+    mafiaMissionState,
+  };
+}
+
+/** 밤 퀴즈 판정 (성공률 기준) — 미제출은 오답 처리 후 집계 */
+export function finalizeNightQuiz(room: GameRoom): GameRoom {
+  let next = markUnansweredAsTimeout(room);
+  const quiz = next.nightQuizState;
+  if (!quiz) return next;
+  if (quiz.outcome === 'SUCCESS' || quiz.outcome === 'FAIL') return next;
+
+  const stats = getNightQuizStats(next);
+  const success = stats.successRate >= quiz.successThresholdPercent;
+  next = {
+    ...next,
+    nightQuizState: {
+      ...quiz,
+      outcome: success ? 'SUCCESS' : 'FAIL',
+      finalSuccessRate: stats.successRate,
+      active: false,
+    },
+  };
+
+  if (
+    !success &&
+    next.mafiaMissionState?.active &&
+    next.mafiaMissionState.type === 'NIGHT_DISRUPT' &&
+    next.mafiaMissionState.outcome === 'PENDING'
+  ) {
+    next = markMafiaMissionSuccess(next);
+  }
+
+  return next;
+}
+
+/** 타이머 종료 시 호출 — 미제출 오답 + 판정 */
+export function resolveNightQuizTimeout(room: GameRoom): GameRoom {
+  const quiz = room.nightQuizState;
+  if (!quiz?.active) return room;
+  if (Date.now() < quiz.endsAt) return room;
+  return finalizeNightQuiz(room);
+}
+
+/** 학생 밤 퀴즈 제출 */
+export function applyNightQuizSubmission(
   room: GameRoom,
-  outcome: Exclude<MissionOutcome, 'PENDING' | null>,
+  playerId: string,
+  answer: string,
 ): GameRoom {
-  if (!room.mafiaMission) {
+  if (room.gameState !== 'NIGHT') return room;
+  const quiz = room.nightQuizState;
+  if (!quiz?.active || quiz.outcome === 'SUCCESS' || quiz.outcome === 'FAIL') {
     return room;
   }
-  const next: GameRoom = {
-    ...room,
-    mafiaMission: { ...room.mafiaMission, outcome },
-    isMafiaBuffActive: outcome === 'SUCCESS',
+  const player = room.players[playerId];
+  if (!player?.isAlive) return room;
+  if (quiz.submissions[playerId]) return room;
+
+  const correct = isAnswerCorrect(quiz.answer, answer);
+  const submission: MissionSubmission = {
+    playerId,
+    answer: answer.trim(),
+    correct,
+    submittedAt: Date.now(),
   };
-  return finishMissionIfReady(next);
+
+  let next: GameRoom = {
+    ...room,
+    nightQuizState: {
+      ...quiz,
+      submissions: { ...quiz.submissions, [playerId]: submission },
+    },
+  };
+
+  // 마피아 연속 방해 진행 (보조 지표 + 목표 도달 시 성공)
+  const mms = next.mafiaMissionState;
+  if (
+    player.role === 'MAFIA' &&
+    mms?.active &&
+    mms.type === 'NIGHT_DISRUPT' &&
+    mms.outcome === 'PENDING'
+  ) {
+    const progress = correct ? 0 : (mms.disruptProgress ?? 0) + 1;
+    const target = mms.disruptTargetCount ?? 3;
+    next = {
+      ...next,
+      mafiaMissionState: { ...mms, disruptProgress: progress },
+    };
+    if (!correct && progress >= target) {
+      next = markMafiaMissionSuccess(next);
+    }
+  }
+
+  const stats = getNightQuizStats(next);
+  if (stats.pendingIds.length === 0) {
+    next = finalizeNightQuiz(next);
+  }
+
+  return next;
 }
 
-/** @deprecated 시민 미션만 판정 — resolveCitizenMission 사용 */
-export function resolveMission(
-  room: GameRoom,
-  outcome: Exclude<MissionOutcome, 'PENDING' | null>,
-): GameRoom {
-  return resolveCitizenMission(room, outcome);
+export async function submitNightQuizAnswer(
+  pin: string,
+  playerId: string,
+  answer: string,
+): Promise<void> {
+  const db = getFirebaseDatabase();
+  const roomRef = ref(db, `rooms/${pin}`);
+  const snap = await get(roomRef);
+  if (!snap.exists()) throw new Error('방이 없습니다.');
+  const next = applyNightQuizSubmission(
+    snap.val() as GameRoom,
+    playerId,
+    answer,
+  );
+  await set(roomRef, next);
+}
+
+/** @deprecated */
+export async function submitMissionAnswer(
+  pin: string,
+  playerId: string,
+  answer: string,
+): Promise<void> {
+  return submitNightQuizAnswer(pin, playerId, answer);
 }
 
 export const VOTE_DURATION_MS = 15_000;
@@ -362,7 +528,6 @@ export function startVotePhase(room: GameRoom): GameRoom {
   };
 }
 
-/** 투표 시간 +15초 (남은 시간 기준, 이미 지났으면 지금부터) */
 export function extendVoteTime(
   room: GameRoom,
   extraMs: number = VOTE_EXTEND_MS,
@@ -376,8 +541,7 @@ export function extendVoteTime(
 
 /**
  * 투표 마감 — 최다 득표자 아웃.
- * 동점이면 동점자 중 1명을 무작위로 아웃.
- * 표가 없으면 아웃 없음.
+ * 낮 마피아 미션(지정 탈락) 성공 시 다음 밤 멀티킬 예약.
  */
 export function resolveDayVote(room: GameRoom): GameRoom {
   const tallies = tallyVotes(room);
@@ -403,7 +567,7 @@ export function resolveDayVote(room: GameRoom): GameRoom {
     eliminatedId = null;
   }
 
-  return {
+  let next: GameRoom = {
     ...room,
     players: nextPlayers,
     gameState: 'DAY_TALK',
@@ -420,20 +584,50 @@ export function resolveDayVote(room: GameRoom): GameRoom {
       resolvedAt: Date.now(),
     },
   };
+
+  const mms = next.mafiaMissionState;
+  if (
+    mms?.active &&
+    mms.type === 'DAY_VOTE_ELIMINATE' &&
+    mms.outcome === 'PENDING' &&
+    eliminatedId &&
+    mms.voteTargetPlayerId === eliminatedId
+  ) {
+    next = markMafiaMissionSuccess(next);
+  }
+
+  return next;
 }
 
 export function dismissDayVoteResult(room: GameRoom): GameRoom {
   return { ...room, dayVoteResult: null };
 }
 
-export function startNightPhase(room: GameRoom): GameRoom {
+/** 밤 시작 — 퀴즈 자동 생성 + 예약된 멀티킬 버프 적용 */
+export function startNightPhase(
+  room: GameRoom,
+  quizConfig?: NightQuizConfig,
+): GameRoom {
   const cleared: Record<string, Player> = {};
   Object.values(room.players).forEach((p) => {
     cleared[p.id] = { ...p, nightTarget: null };
   });
 
-  // gmEvent(정전/기회의 밤)는 이번 밤 동안 유지
-  // isMafiaBuffActive는 마피아 미션 성공 버프를 밤까지 유지
+  const config: NightQuizConfig = quizConfig ?? {
+    mode: 'MATH',
+    grade: 3,
+    question: '1 + 1 = ?',
+    answer: '2',
+    choices: ['1', '2', '3', '4'],
+    correctIndex: 1,
+    timeLimitSec: 45,
+    successThresholdPercent: 70,
+    successHint:
+      '마피아(X맨) 중 한 명은 오늘 평소보다 말이 적을 수 있습니다.',
+  };
+
+  const activateBuff = room.pendingMafiaNightBuff === true;
+
   return {
     ...room,
     players: cleared,
@@ -443,6 +637,9 @@ export function startNightPhase(room: GameRoom): GameRoom {
     voteEndsAt: null,
     nightResults: null,
     dayVoteResult: null,
+    nightQuizState: createNightQuizState(room, config),
+    isMafiaBuffActive: activateBuff,
+    pendingMafiaNightBuff: false,
   };
 }
 

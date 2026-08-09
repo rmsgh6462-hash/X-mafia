@@ -4,16 +4,16 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Sparkles } from 'lucide-react';
 import { ROLE_ACCENTS, ROLE_BLURBS, ROLE_LABELS } from '@/lib/game/roles';
-import type { CitizenMission, MafiaMission, Role } from '@/types/game';
+import type { MafiaMissionState, NightQuizState, Role } from '@/types/game';
 
 export function RoleCard({
   role,
-  citizenMission,
+  nightQuiz,
   mafiaMission,
 }: {
   role: Role;
-  citizenMission?: CitizenMission | null;
-  mafiaMission?: MafiaMission | null;
+  nightQuiz?: NightQuizState | null;
+  mafiaMission?: MafiaMissionState | null;
 }) {
   const [flipped, setFlipped] = useState(false);
   const isMafia = role === 'MAFIA';
@@ -34,7 +34,6 @@ export function RoleCard({
           transition={{ duration: 0.65, ease: [0.4, 0.1, 0.2, 1] }}
           style={{ transformStyle: 'preserve-3d' }}
         >
-          {/* 앞면 */}
           <div
             className="absolute inset-0 flex flex-col items-center justify-center rounded-2xl border border-white/15 bg-gradient-to-br from-stone-800 to-stone-950 shadow-xl"
             style={{ backfaceVisibility: 'hidden' }}
@@ -44,7 +43,6 @@ export function RoleCard({
             <p className="mt-3 text-sm text-white/55">클릭 / 탭하여 확인</p>
           </div>
 
-          {/* 뒷면 */}
           <div
             className="absolute inset-0 flex flex-col rounded-2xl p-5 shadow-xl sm:p-6"
             style={{
@@ -65,17 +63,21 @@ export function RoleCard({
 
             {isMafia && (
               <div className="mt-auto space-y-2 pt-3">
-                {citizenMission && (
+                {nightQuiz?.question && (
                   <div className="rounded-lg bg-black/35 px-2.5 py-2">
-                    <p className="text-[10px] font-bold text-amber-200">시민 미션 (참고)</p>
+                    <p className="text-[10px] font-bold text-amber-200">
+                      밤 퀴즈 (참고)
+                    </p>
                     <p className="text-[11px] leading-snug text-white/90">
-                      {citizenMission.description}
+                      {nightQuiz.question}
                     </p>
                   </div>
                 )}
-                {mafiaMission && (
+                {mafiaMission?.active && mafiaMission.description && (
                   <div className="rounded-lg bg-red-950/70 px-2.5 py-2 ring-1 ring-red-400/40">
-                    <p className="text-[10px] font-bold text-red-200">X맨 비밀 미션</p>
+                    <p className="text-[10px] font-bold text-red-200">
+                      X맨 비밀 미션
+                    </p>
                     <p className="text-[11px] leading-snug text-white/90">
                       {mafiaMission.description}
                     </p>

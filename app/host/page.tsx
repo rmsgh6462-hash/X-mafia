@@ -14,8 +14,6 @@ import {
   Timer,
   Users,
   Vote,
-  Check,
-  X,
   Volume2,
   HeartHandshake,
   Plus,
@@ -26,6 +24,11 @@ import GameBackground, {
 } from '@/components/GameBackground';
 import { GmPanel } from '@/components/host/GmPanel';
 import { MatchChatMonitor } from '@/components/host/MatchChatMonitor';
+import {
+  MafiaMissionAssignForm,
+  NightQuizConfigForm,
+  NightQuizMonitor,
+} from '@/components/host/MissionAssignPanel';
 import { NightActivityBoard } from '@/components/host/NightActivityBoard';
 import { RoleAssignPanel } from '@/components/host/RoleAssignPanel';
 import {
@@ -45,6 +48,7 @@ import {
 } from '@/lib/gameLogic';
 import {
   alivePlayers,
+  assignMafiaMission,
   assignRolesAndStart,
   assignRolesByCounts,
   assignRolesByCountsAndStart,
@@ -54,22 +58,28 @@ import {
   dismissDayVoteResult,
   endGameRoom,
   extendVoteTime,
+  finalizeNightQuiz,
   generatePin,
   patchRoom,
   playerList,
-  resolveCitizenMission,
   resolveDayVote,
-  resolveMafiaMission,
+  resolveMafiaMissionState,
+  resolveNightQuizTimeout,
   saveRoom,
   startAssignedGame,
   startMatchPhase,
-  startMissionPhase,
   startNightPhase,
   startVotePhase,
   subscribeRoom,
   tallyVotes,
 } from '@/lib/game/room';
-import type { GameRoom, GameState, Theme } from '@/types/game';
+import type {
+  GameRoom,
+  GameState,
+  MafiaMissionAssignConfig,
+  NightQuizConfig,
+  Theme,
+} from '@/types/game';
 
 function toBackgroundPhase(state: GameState): BackgroundPhase {
   if (state === 'WAITING') return 'WAITING';
@@ -102,6 +112,8 @@ export default function HostPage() {
   const [joinUrl, setJoinUrl] = useState('');
   const [audioReady, setAudioReady] = useState(false);
   const [roleBoardOpen, setRoleBoardOpen] = useState(false);
+  const [nightConfigOpen, setNightConfigOpen] = useState(false);
+  const [mafiaMissionOpen, setMafiaMissionOpen] = useState(false);
   const prevStateRef = useRef<GameState | null>(null);
   const roomIdRef = useRef<string | null>(null);
 
@@ -137,15 +149,38 @@ export default function HostPage() {
     setJoinUrl(window.location.origin);
   }, []);
 
-  // 매칭·투표 타이머 틱
+  // 매칭·투표·밤퀴즈 타이머 틱
   useEffect(() => {
     const needTick =
       (room?.gameState === 'DAY_MATCH' && room.matchEndsAt) ||
-      (room?.gameState === 'DAY_VOTE' && room.voteEndsAt);
+      (room?.gameState === 'DAY_VOTE' && room.voteEndsAt) ||
+      (room?.gameState === 'NIGHT' &&
+        room.nightQuizState?.active &&
+        room.nightQuizState.outcome === 'PENDING');
     if (!needTick) return;
     const id = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(id);
-  }, [room?.gameState, room?.matchEndsAt, room?.voteEndsAt]);
+  }, [
+    room?.gameState,
+    room?.matchEndsAt,
+    room?.voteEndsAt,
+    room?.nightQuizState?.active,
+    room?.nightQuizState?.outcome,
+    room?.nightQuizState?.endsAt,
+  ]);
+
+  const quizTimeoutRef = useRef<number | null>(null);
+
+  // 밤 퀴즈 시간 초과 → 자동 판정
+  useEffect(() => {
+    if (!room || room.gameState !== 'NIGHT') return;
+    const quiz = room.nightQuizState;
+    if (!quiz?.active || quiz.outcome !== 'PENDING') return;
+    if (now < quiz.endsAt) return;
+    if (quizTimeoutRef.current === quiz.endsAt) return;
+    quizTimeoutRef.current = quiz.endsAt;
+    void runAction(resolveNightQuizTimeout);
+  }, [room, now]);
 
   // Firebase 구독
   useEffect(() => {
@@ -512,43 +547,9 @@ export default function HostPage() {
                 <PartnerGrid room={room} />
               </StagePanel>
             ) : room.gameState === 'DAY_MISSION' ? (
-              <StagePanel key="mission" title="미션 진행">
-                <div className="mx-auto grid w-full max-w-3xl gap-4 text-left md:grid-cols-2">
-                  <MissionJudgeCard
-                    title="시민 미션"
-                    accent="citizen"
-                    description={
-                      room.currentCitizenMission?.description ?? '미션 준비 중'
-                    }
-                    meta={`제한 ${room.currentCitizenMission?.timeLimitSec ?? 0}초`}
-                    outcome={room.missionOutcome}
-                    busy={busy}
-                    onSuccess={() =>
-                      void runAction((r) => resolveCitizenMission(r, 'SUCCESS'))
-                    }
-                    onFail={() =>
-                      void runAction((r) => resolveCitizenMission(r, 'FAIL'))
-                    }
-                  />
-                  <MissionJudgeCard
-                    title="마피아 미션"
-                    accent="mafia"
-                    description={
-                      room.mafiaMission?.description ?? '미션 준비 중'
-                    }
-                    meta="성공 시 생존 마피아 각자 1명 공격 (서로 살해 가능)"
-                    outcome={room.mafiaMission?.outcome ?? null}
-                    busy={busy}
-                    onSuccess={() =>
-                      void runAction((r) => resolveMafiaMission(r, 'SUCCESS'))
-                    }
-                    onFail={() =>
-                      void runAction((r) => resolveMafiaMission(r, 'FAIL'))
-                    }
-                  />
-                </div>
-                <p className="mt-5 text-sm text-white/55">
-                  양쪽 판정이 끝나면 자동으로 토론으로 넘어갑니다.
+              <StagePanel key="mission-legacy" title="미션">
+                <p className="text-white/70">
+                  시민 퀴즈는 이제 밤 세션에서 진행됩니다. 밤을 시작해 주세요.
                 </p>
               </StagePanel>
             ) : room.gameState === 'DAY_VOTE' ? (
@@ -595,11 +596,11 @@ export default function HostPage() {
                 </div>
               </StagePanel>
             ) : room.gameState === 'NIGHT' ? (
-              <StagePanel key="night" title="밤 — 직업별 활동 모니터">
+              <StagePanel key="night" title="밤 — 퀴즈 · 직업 활동">
                 <div className="flex flex-wrap items-center justify-center gap-4">
                   <Moon className="h-10 w-10 text-red-300" />
                   <p className="text-lg text-white/85">
-                    학생 능력 사용을 실시간으로 확인하세요
+                    전원 퀴즈 + 특수 직업 능력 모니터
                   </p>
                 </div>
                 {room.gmEvent === 'SILENCE_NIGHT' && (
@@ -614,9 +615,21 @@ export default function HostPage() {
                 )}
                 {room.isMafiaBuffActive && (
                   <p className="mt-2 text-sm font-semibold text-red-300">
-                    멀티킬 버프 활성 — 마피아 각자 독립 지목
+                    멀티킬 버프 — 마피아 각자 1명 독립 지목
                   </p>
                 )}
+
+                <div className="mt-6">
+                  <NightQuizMonitor
+                    room={room}
+                    busy={busy}
+                    now={now}
+                    onFinalize={() => {
+                      void runAction(finalizeNightQuiz);
+                      speak('밤 퀴즈를 판정합니다.');
+                    }}
+                  />
+                </div>
 
                 <NightActivityBoard room={room} />
 
@@ -627,7 +640,7 @@ export default function HostPage() {
                   className="mt-8 inline-flex items-center gap-2 rounded-xl bg-amber-400 px-6 py-3 text-base font-black text-stone-900 hover:bg-amber-300 disabled:opacity-50"
                 >
                   <Sunrise className="h-5 w-5" />
-                  아침 발표 (밤 결과 연산)
+                  아침 발표 (퀴즈·밤 결과)
                 </button>
               </StagePanel>
             ) : room.gameState === 'RESULT' ? (
@@ -655,7 +668,12 @@ export default function HostPage() {
                     </p>
                     {room.isMafiaBuffActive && (
                       <p className="mt-2 text-sm font-semibold text-red-300">
-                        마피아 미션 성공 — 오늘 밤 멀티킬 버프 활성
+                        다음 밤 멀티킬 예약됨 (또는 진행 중)
+                      </p>
+                    )}
+                    {room.pendingMafiaNightBuff && (
+                      <p className="mt-2 text-sm font-semibold text-red-300">
+                        마피아 미션 보상 — 다음 밤 멀티킬 예약
                       </p>
                     )}
                     {room.currentHint && (
@@ -694,7 +712,11 @@ export default function HostPage() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-white/35">
                 {room ? STATE_LABELS[room.gameState] : '방 대기'}
-                {room?.isMafiaBuffActive ? ' · 멀티킬 버프' : ''}
+                {room?.pendingMafiaNightBuff
+                  ? ' · 다음밤 멀티킬'
+                  : room?.isMafiaBuffActive
+                    ? ' · 멀티킬'
+                    : ''}
               </p>
               <div className="flex items-center gap-2">
                 <RoleBoardToggle
@@ -774,9 +796,9 @@ export default function HostPage() {
                     />
                     <ControlBtn
                       icon={<Target className="h-4 w-4" />}
-                      label="미션"
+                      label="마피아 미션"
                       disabled={busy}
-                      onClick={() => void runAction(startMissionPhase, 2)}
+                      onClick={() => setMafiaMissionOpen(true)}
                     />
                     <ControlBtn
                       icon={<Vote className="h-4 w-4" />}
@@ -788,7 +810,7 @@ export default function HostPage() {
                       icon={<Moon className="h-4 w-4" />}
                       label="밤"
                       disabled={busy}
-                      onClick={() => void runAction(startNightPhase, 2)}
+                      onClick={() => setNightConfigOpen(true)}
                       accent="night"
                     />
                   </>
@@ -879,6 +901,97 @@ export default function HostPage() {
             onClose={() => setRoleBoardOpen(false)}
           />
         )}
+
+        {room && nightConfigOpen && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-3 backdrop-blur-sm md:items-center">
+            <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/15 bg-stone-950 p-5 shadow-2xl">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-base font-black text-indigo-100">
+                  밤 시작 · 미션 부여
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setNightConfigOpen(false)}
+                  className="rounded-lg px-2 py-1 text-sm text-white/60 hover:bg-white/10"
+                >
+                  닫기
+                </button>
+              </div>
+              <NightQuizConfigForm
+                busy={busy}
+                pendingBuff={!!room.pendingMafiaNightBuff}
+                onCancel={() => setNightConfigOpen(false)}
+                onStart={(config: NightQuizConfig) => {
+                  setNightConfigOpen(false);
+                  void runAction((r) => startNightPhase(r, config), 2);
+                  speak('밤이 되었습니다. 퀴즈를 풀어 주세요.');
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {room && mafiaMissionOpen && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-3 backdrop-blur-sm md:items-center">
+            <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/15 bg-stone-950 p-5 shadow-2xl">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-base font-black text-red-100">
+                  마피아 미션 부여
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setMafiaMissionOpen(false)}
+                  className="rounded-lg px-2 py-1 text-sm text-white/60 hover:bg-white/10"
+                >
+                  닫기
+                </button>
+              </div>
+              <MafiaMissionAssignForm
+                room={room}
+                busy={busy}
+                onAssign={(config: MafiaMissionAssignConfig) => {
+                  setMafiaMissionOpen(false);
+                  void runAction((r) => assignMafiaMission(r, config));
+                  speak('마피아 미션이 부여되었습니다.');
+                }}
+              />
+              {room.mafiaMissionState?.active && (
+                <div className="mt-4 space-y-2 rounded-xl bg-white/5 p-3 text-xs">
+                  <p className="font-bold text-white/70">현재 미션</p>
+                  <p>{room.mafiaMissionState.description}</p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        void runAction((r) =>
+                          resolveMafiaMissionState(r, 'SUCCESS'),
+                        );
+                        setMafiaMissionOpen(false);
+                      }}
+                      className="rounded-lg bg-emerald-600 px-3 py-1.5 font-bold text-white"
+                    >
+                      수동 성공
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        void runAction((r) =>
+                          resolveMafiaMissionState(r, 'FAIL'),
+                        );
+                        setMafiaMissionOpen(false);
+                      }}
+                      className="rounded-lg bg-red-700 px-3 py-1.5 font-bold text-white"
+                    >
+                      수동 실패
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </GameBackground>
   );
@@ -927,83 +1040,6 @@ function StagePanel({
       </h2>
       {children}
     </motion.div>
-  );
-}
-
-function MissionJudgeCard({
-  title,
-  description,
-  meta,
-  outcome,
-  accent,
-  busy,
-  onSuccess,
-  onFail,
-}: {
-  title: string;
-  description: string;
-  meta: string;
-  outcome: string | null;
-  accent: 'citizen' | 'mafia';
-  busy: boolean;
-  onSuccess: () => void;
-  onFail: () => void;
-}) {
-  const done = outcome === 'SUCCESS' || outcome === 'FAIL';
-  const ring =
-    accent === 'mafia'
-      ? 'ring-red-400/30 bg-red-950/35'
-      : 'ring-emerald-400/25 bg-emerald-950/30';
-
-  return (
-    <div className={`rounded-2xl p-4 ring-1 ${ring}`}>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <h3
-          className={`text-sm font-black ${
-            accent === 'mafia' ? 'text-red-200' : 'text-emerald-200'
-          }`}
-        >
-          {title}
-        </h3>
-        {done && (
-          <span
-            className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-              outcome === 'SUCCESS'
-                ? 'bg-emerald-500/25 text-emerald-200'
-                : 'bg-red-500/25 text-red-200'
-            }`}
-          >
-            {outcome === 'SUCCESS' ? '성공' : '실패'}
-          </span>
-        )}
-      </div>
-      <p className="text-base font-bold leading-snug text-white md:text-lg">
-        {description}
-      </p>
-      <p className="mt-2 text-xs text-white/50">{meta}</p>
-      {!done && (
-        <div className="mt-4 flex gap-2">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onSuccess}
-            className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl bg-emerald-500 px-3 py-2.5 text-sm font-black text-white hover:bg-emerald-400 disabled:opacity-50"
-          >
-            <Check className="h-4 w-4" />
-            성공
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onFail}
-            className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl bg-red-600 px-3 py-2.5 text-sm font-black text-white hover:bg-red-500 disabled:opacity-50"
-          >
-            <X className="h-4 w-4" />
-            실패
-          </button>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -1081,6 +1117,9 @@ function MorningResultStage({
   const deadIds = room.nightResults?.deadPlayerIds ?? [];
   const savedIds = room.nightResults?.savedPlayerIds ?? [];
   const news = room.nightResults?.reporterNews;
+  const quizHint = room.nightResults?.quizHint;
+  const quizRate = room.nightResults?.quizSuccessRate;
+  const quizOutcome = room.nightResults?.quizOutcome;
 
   return (
     <StagePanel title="아침 결과 발표">
@@ -1089,6 +1128,21 @@ function MorningResultStage({
         animate={{ opacity: 1 }}
         className="space-y-6"
       >
+        {quizOutcome && quizOutcome !== 'PENDING' && (
+          <div className="rounded-xl bg-indigo-950/50 px-4 py-3 ring-1 ring-indigo-400/30">
+            <p className="text-sm font-bold text-indigo-100">
+              밤 퀴즈{' '}
+              {quizOutcome === 'SUCCESS' ? '성공' : '실패'}
+              {quizRate != null ? ` · ${quizRate}%` : ''}
+            </p>
+            {quizHint && (
+              <p className="mt-2 text-base font-semibold text-amber-100">
+                힌트: {quizHint}
+              </p>
+            )}
+          </div>
+        )}
+
         {deadIds.length === 0 ? (
           <motion.p
             initial={{ scale: 0.9, opacity: 0 }}

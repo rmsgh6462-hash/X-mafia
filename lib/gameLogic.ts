@@ -1,4 +1,5 @@
 import type { GameRoom, NightResults, Player } from '@/types/game';
+import { finalizeNightQuiz } from '@/lib/game/room';
 
 function playersOf(room: GameRoom): Player[] {
   return Object.values(room.players ?? {});
@@ -10,7 +11,7 @@ export function collectMafiaKillTargets(room: GameRoom): string[] {
     .filter((p) => p.isAlive && p.role === 'MAFIA' && p.nightTarget)
     .map((p) => p.nightTarget as string);
 
-  // 멀티킬 버프가 없으면 최다 득표(지목) 1명만, 있으면 전원 독립 지목(중복 제거)
+  // 멀티킬 버프(다음 밤 총격권)가 없으면 최다 지목 1명만
   if (!room.isMafiaBuffActive) {
     if (targets.length === 0) return [];
     const counts = new Map<string, number>();
@@ -40,7 +41,7 @@ export function collectDoctorSaveTargets(room: GameRoom): string[] {
   return [...new Set(saves)];
 }
 
-/** 기자 속보 문구 (기존 값 유지 또는 nightTarget 기반 생성) */
+/** 기자 속보 문구 */
 export function collectReporterNews(room: GameRoom): string | null {
   const existing = room.nightResults?.reporterNews ?? null;
   if (existing) return existing;
@@ -55,40 +56,50 @@ export function collectReporterNews(room: GameRoom): string | null {
 }
 
 export interface ResolveNightOptions {
-  /** 기회의 밤: 사망 적용 후 부활 투표 대기 */
   openReviveVote?: boolean;
 }
 
 /**
  * 밤 세션 결과 연산
- * - 마피아 킬(멀티킬 시 Set 중복 제거)
- * - 의사 구출 (SILENCE_NIGHT 시 불가)
- * - 플레이어 isAlive 반영 + nightResults 기록
- * - gameState → RESULT (아침 발표)
+ * - 밤 퀴즈 판정 → 성공 시 아침 힌트
+ * - 마피아 킬(멀티킬 시 Set)
+ * - 의사 구출
+ * - gameState → RESULT
  */
 export function resolveNight(
   room: GameRoom,
   options: ResolveNightOptions = {},
 ): GameRoom {
-  const killTargets = collectMafiaKillTargets(room);
-  const savedIds = collectDoctorSaveTargets(room);
+  // 미제출 포함 퀴즈 최종 판정
+  let nextRoom = finalizeNightQuiz(room);
+
+  const killTargets = collectMafiaKillTargets(nextRoom);
+  const savedIds = collectDoctorSaveTargets(nextRoom);
   const savedSet = new Set(savedIds);
 
   const deadPlayerIds = killTargets.filter((id) => {
-    const target = room.players[id];
+    const target = nextRoom.players[id];
     if (!target || !target.isAlive) return false;
     if (savedSet.has(id)) return false;
     return true;
   });
 
+  const quiz = nextRoom.nightQuizState;
+  const quizSuccess = quiz?.outcome === 'SUCCESS';
+  const quizHint =
+    quizSuccess && quiz?.successHint ? quiz.successHint : null;
+
   const nightResults: NightResults = {
     deadPlayerIds,
     savedPlayerIds: savedIds.filter((id) => killTargets.includes(id)),
-    reporterNews: collectReporterNews(room),
+    reporterNews: collectReporterNews(nextRoom),
+    quizHint,
+    quizSuccessRate: quiz?.finalSuccessRate ?? null,
+    quizOutcome: quiz?.outcome ?? null,
   };
 
   const nextPlayers: Record<string, Player> = {};
-  Object.values(room.players).forEach((p) => {
+  Object.values(nextRoom.players).forEach((p) => {
     const died = deadPlayerIds.includes(p.id);
     nextPlayers[p.id] = {
       ...p,
@@ -99,19 +110,20 @@ export function resolveNight(
 
   const openRevive =
     options.openReviveVote !== false &&
-    room.gmEvent === 'REVIVE_NIGHT' &&
+    nextRoom.gmEvent === 'REVIVE_NIGHT' &&
     deadPlayerIds.length > 0;
 
   return {
-    ...room,
+    ...nextRoom,
     players: nextPlayers,
     nightResults,
+    currentHint: quizHint ?? nextRoom.currentHint,
     gameState: 'RESULT',
     votes: {},
     matchEndsAt: null,
     voteEndsAt: null,
-    // 부활 투표 세션이면 gmEvent 유지, 아니면 소모
     gmEvent: openRevive ? 'REVIVE_NIGHT' : null,
+    // 이번 밤 버프 소모
     isMafiaBuffActive: false,
   };
 }

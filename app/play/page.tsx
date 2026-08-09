@@ -11,7 +11,10 @@ import { AvatarPickerGrid } from '@/components/play/AvatarPicker';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { GhostMode } from '@/components/play/GhostMode';
 import { MatchChatPanel } from '@/components/play/MatchChatPanel';
-import { NightPanel } from '@/components/play/NightPanel';
+import {
+  DayMafiaMissionBanner,
+  NightSessionPanel,
+} from '@/components/play/MissionPlayPanel';
 import { PlayerRoster } from '@/components/play/PlayerRoster';
 import { Popup } from '@/components/play/Popup';
 import { RoleCard } from '@/components/play/RoleCard';
@@ -237,13 +240,22 @@ function PlayPageInner() {
   useEffect(() => {
     if (!room || !me?.isAlive) return;
     if (!room.currentHint) return;
-    const fromMission = room.missionOutcome === 'SUCCESS';
+    const fromQuiz =
+      room.gameState === 'RESULT' &&
+      room.nightResults?.quizOutcome === 'SUCCESS';
     const fromGm = room.gmEvent === 'HINT_BOOST';
-    if ((fromMission || fromGm) && seenHintRef.current !== room.currentHint) {
+    if ((fromQuiz || fromGm) && seenHintRef.current !== room.currentHint) {
       seenHintRef.current = room.currentHint;
       setHintOpen(true);
     }
-  }, [room?.missionOutcome, room?.currentHint, room?.gmEvent, room, me?.isAlive]);
+  }, [
+    room?.nightResults?.quizOutcome,
+    room?.currentHint,
+    room?.gmEvent,
+    room?.gameState,
+    room,
+    me?.isAlive,
+  ]);
 
   useEffect(() => {
     if (!room || !me) return;
@@ -454,7 +466,6 @@ function PlayPageInner() {
 
   const isNight = room.gameState === 'NIGHT';
   const isVote = room.gameState === 'DAY_VOTE';
-  const isMission = room.gameState === 'DAY_MISSION';
   const isGhost = !me.isAlive;
   const shellPanel = isGhost ? 'ghost' : isNight ? 'night' : 'day';
   const aliveCount = alivePlayers(room).length;
@@ -511,8 +522,8 @@ function PlayPageInner() {
                 >
                   <RoleCard
                     role={me.role}
-                    citizenMission={room.currentCitizenMission}
-                    mafiaMission={room.mafiaMission}
+                    nightQuiz={room.nightQuizState}
+                    mafiaMission={room.mafiaMissionState}
                   />
                 </motion.div>
               ) : (
@@ -566,22 +577,8 @@ function PlayPageInner() {
               </>
             )}
 
-            {isMission && room.currentCitizenMission && (
-              <section className="rounded-2xl bg-sky-950/50 p-5 ring-1 ring-sky-400/25">
-                <h3 className="text-sm font-black text-sky-100">낮 미션 수신</h3>
-                <p className="mt-3 text-base font-bold leading-snug">
-                  {room.currentCitizenMission.description}
-                </p>
-                <p className="mt-3 text-xs text-sky-100/70">
-                  제한 {room.currentCitizenMission.timeLimitSec}초 · 성공 시 마피아
-                  힌트 공개
-                </p>
-                {me.role === 'MAFIA' && room.mafiaMission && (
-                  <p className="mt-4 rounded-xl bg-red-950/60 px-4 py-3 text-xs text-red-100 ring-1 ring-red-400/30">
-                    X맨 비밀 미션: {room.mafiaMission.description}
-                  </p>
-                )}
-              </section>
+            {me.isAlive && (
+              <DayMafiaMissionBanner room={room} me={me} />
             )}
 
             {isVote && <VotePanel room={room} me={me} pin={session.pin} />}
@@ -590,17 +587,21 @@ function PlayPageInner() {
               <MorningPanel room={room} me={me} pin={session.pin} />
             )}
 
-            {isNight && me.role && (
-              <NightPanel room={room} me={me} pin={session.pin} />
+            {isNight && me.isAlive && (
+              <NightSessionPanel room={room} me={me} pin={session.pin} />
             )}
 
             {room.gameState === 'DAY_TALK' && me.role && (
               <section className="rounded-2xl bg-white/5 p-5 text-sm text-white/75 ring-1 ring-white/10">
                 토론 시간입니다. 직업을 들키지 않도록 주의하세요.
+                {me.role === 'MAFIA' && room.pendingMafiaNightBuff && (
+                  <span className="mt-3 block font-semibold text-red-300">
+                    미션 보상 — 다음 밤에 각자 1명을 공격할 수 있습니다.
+                  </span>
+                )}
                 {me.role === 'MAFIA' && room.isMafiaBuffActive && (
                   <span className="mt-3 block font-semibold text-red-300">
-                    미션 보상 활성 — 밤에는 생존 마피아 각자 1명을 공격합니다.
-                    다른 마피아를 지목할 수도 있습니다.
+                    멀티킬 버프가 이번 밤에 적용됩니다.
                   </span>
                 )}
               </section>
@@ -749,6 +750,23 @@ function MorningPanel({
   return (
     <section className="space-y-4 rounded-2xl bg-stone-900/70 p-5 ring-1 ring-white/10">
       <h3 className="text-sm font-black text-amber-100">아침 결과</h3>
+      {room.nightResults?.quizOutcome &&
+        room.nightResults.quizOutcome !== 'PENDING' && (
+          <div className="rounded-xl bg-indigo-950/50 px-3 py-2 text-xs ring-1 ring-indigo-400/30">
+            <p className="font-bold text-indigo-100">
+              밤 퀴즈{' '}
+              {room.nightResults.quizOutcome === 'SUCCESS' ? '성공' : '실패'}
+              {room.nightResults.quizSuccessRate != null
+                ? ` · ${room.nightResults.quizSuccessRate}%`
+                : ''}
+            </p>
+            {room.nightResults.quizHint && (
+              <p className="mt-1 text-sm text-amber-100">
+                힌트: {room.nightResults.quizHint}
+              </p>
+            )}
+          </div>
+        )}
       {deadIds.length === 0 ? (
         <p className="text-sm text-emerald-200">지난밤 희생자 없음</p>
       ) : (

@@ -52,31 +52,94 @@ export interface MatchChatMessage {
 export interface MatchChatRound {
   id: string;
   createdAt: number;
-  /** pairKey → messages */
   chats: Record<string, Record<string, MatchChatMessage>>;
 }
 
-/** 시민 미션 (설명 + 제한시간) */
-export interface CitizenMission {
-  /** 미션 설명 */
-  description: string;
-  /** 제한시간 (초) */
+/** 퀴즈/미션 제출 */
+export interface MissionSubmission {
+  playerId: string;
+  answer: string;
+  correct: boolean;
+  submittedAt: number;
+}
+
+/**
+ * 밤 세션 전원 퀴즈 상태 (매 밤 자동)
+ * Firebase: rooms/{pin}/nightQuizState
+ */
+export interface NightQuizState {
+  active: boolean;
+  /** MATH | KOREAN | CUSTOM */
+  mode: 'MATH' | 'KOREAN' | 'CUSTOM';
+  /** 수학 모드 학년 1~6 */
+  grade: number | null;
+  question: string;
+  answer: string;
+  /** 항상 4지선다 */
+  choices: string[];
+  /** 0~3 정답 인덱스 */
+  correctIndex: number;
   timeLimitSec: number;
-}
-
-/** 마피아 서브 미션 */
-export interface MafiaMission {
-  /** 미션 설명 */
-  description: string;
-  /** 교사 판정 — PENDING이면 아직 미판정 */
+  /** 퀴즈 종료 시각 epoch ms */
+  endsAt: number;
+  /** 전체 성공 기준 성공률 0~100 */
+  successThresholdPercent: number;
+  /** 전체 성공 시 아침에 공개할 힌트 */
+  successHint: string;
+  /** playerId → 제출 */
+  submissions: Record<string, MissionSubmission>;
+  /** playerId → 공개할 타인 1명 */
+  peerMap: Record<string, string>;
+  /** 판정 결과 (아침 발표 전/후) */
   outcome: MissionOutcome;
+  /** 판정 시점 성공률 */
+  finalSuccessRate: number | null;
 }
 
-/** 낮 투표 결과 (최다 득표자 아웃) */
+/** 마피아 미션 유형 — 교사 부여 시에만 */
+export type MafiaMissionType = 'NIGHT_DISRUPT' | 'DAY_VOTE_ELIMINATE';
+
+/**
+ * 마피아 미션 상태 (교사 [마피아 미션 부여] 시에만 active)
+ * Firebase: rooms/{pin}/mafiaMissionState
+ */
+export interface MafiaMissionState {
+  active: boolean;
+  type: MafiaMissionType | null;
+  description: string;
+  outcome: MissionOutcome;
+  /** NIGHT_DISRUPT: 연속 오답 목표 (표시/보조) */
+  disruptTargetCount?: number;
+  disruptProgress?: number;
+  /** DAY_VOTE_ELIMINATE 대상 */
+  voteTargetPlayerId?: string | null;
+}
+
+/** @deprecated 하위 호환 — NightQuizState로 이관 */
+export interface CitizenMission {
+  question: string;
+  answer: string;
+  choices?: string[];
+  timeLimitSec: number;
+  successThresholdPercent: number;
+  successHint: string;
+  description?: string;
+}
+
+/** @deprecated 하위 호환 — MafiaMissionState로 이관 */
+export interface MafiaMission {
+  type: MafiaMissionType | 'DISRUPT_STREAK' | 'VOTE_ELIMINATE';
+  description: string;
+  outcome: MissionOutcome;
+  disruptTargetCount?: number;
+  disruptProgress?: number;
+  voteTargetPlayerId?: string | null;
+}
+
+/** 낮 투표 결과 */
 export interface DayVoteResult {
   eliminatedPlayerId: string | null;
   eliminatedName: string | null;
-  /** 최다 득표가 동점이었는지 */
   wasTie: boolean;
   tallies: Record<string, number>;
   resolvedAt: number;
@@ -84,69 +147,85 @@ export interface DayVoteResult {
 
 /** 밤 결과 요약 */
 export interface NightResults {
-  /** 사망한 플레이어 ID 목록 */
   deadPlayerIds: string[];
-  /** 의사가 살린 플레이어 ID 목록 */
   savedPlayerIds: string[];
-  /** 기자의 취재 속보 (없으면 null) */
   reporterNews: string | null;
+  /** 밤 퀴즈 성공으로 공개되는 힌트 (아침 발표용) */
+  quizHint: string | null;
+  quizSuccessRate: number | null;
+  quizOutcome: MissionOutcome;
 }
 
 /** 개별 플레이어 */
 export interface Player {
   id: string;
   name: string;
-  /** 역할 배정 전에는 null */
   role: Role | null;
   isAlive: boolean;
-  /** 밤에 선택한 대상 플레이어 ID */
   nightTarget: string | null;
-  /** 1:1 매칭 파트너 플레이어 ID */
   partnerId: string | null;
-  /** 캐릭터 ID (M0–M15 / F0–F15) */
   avatarId: string;
-  /** @deprecated avatarId 사용 — 하위 호환 */
   avatarIndex?: number;
 }
 
-/** 게임 룸 전체 상태 (Realtime Database rooms/{roomId} 스키마) */
+/** 게임 룸 전체 상태 */
 export interface GameRoom {
   roomId: string;
-  /** 학생 입장용 PIN (보통 roomId와 동일) */
   pin: string;
   gameState: GameState;
   theme: Theme;
-  /** 플레이어 맵 — key: playerId */
   players: Record<string, Player>;
-  /** 현재 시민 미션 */
-  currentCitizenMission: CitizenMission | null;
-  /** 마피아 서브 미션 */
-  mafiaMission: MafiaMission | null;
-  /** 마피아 멀티킬 보상 활성화 여부 */
+
+  /** 밤 전원 퀴즈 */
+  nightQuizState: NightQuizState | null;
+  /** 마피아 미션 (교사 부여) */
+  mafiaMissionState: MafiaMissionState | null;
+  /** 마피아 미션 성공 → 다음 밤 멀티킬 예약 */
+  pendingMafiaNightBuff: boolean;
+  /** 이번 밤 멀티킬(각자 1명 공격) 활성 */
   isMafiaBuffActive: boolean;
-  /** 공개된 마피아 힌트 */
-  currentHint: string | null;
-  /** 직전 밤 결과 */
-  nightResults: NightResults | null;
-  /** GM 특수 이벤트 */
-  gmEvent: GmEvent;
-  /** 투표: voterId → targetPlayerId */
-  votes: Record<string, string>;
-  /** 1:1 매칭 종료 시각 (epoch ms) */
-  matchEndsAt: number | null;
-  /** 낮 투표 종료 시각 (epoch ms) */
-  voteEndsAt: number | null;
-  /** 시민 미션 승인 상태 */
+
+  /** @deprecated */
+  currentCitizenMission: CitizenMission | null;
+  /** @deprecated */
+  mafiaMission: MafiaMission | null;
+  /** @deprecated */
+  missionSubmissions: Record<string, MissionSubmission>;
+  /** @deprecated */
+  missionPeerMap: Record<string, string>;
+  /** @deprecated */
   missionOutcome: MissionOutcome;
-  /** 직전 낮 투표 결과 (발표용) */
+
+  currentHint: string | null;
+  nightResults: NightResults | null;
+  gmEvent: GmEvent;
+  votes: Record<string, string>;
+  matchEndsAt: number | null;
+  voteEndsAt: number | null;
   dayVoteResult: DayVoteResult | null;
   createdAt: number;
-  /** 유령 전용 채팅 */
   ghostChat: Record<string, GhostChatMessage>;
-  /** 1:1 매칭 채팅 — key: pairKey(sorted playerIds) → messages */
   matchChats: Record<string, Record<string, MatchChatMessage>>;
-  /** 이전 매칭 라운드 채팅 기록 (교사 확인용) */
   matchChatHistory: Record<string, MatchChatRound>;
-  /** 유령 승자 예측 투표: playerId → side */
   ghostPredictions: Record<string, WinnerSide>;
+}
+
+/** 밤 시작 시 퀴즈 설정 */
+export interface NightQuizConfig {
+  mode: 'MATH' | 'KOREAN' | 'CUSTOM';
+  grade?: number | null;
+  question: string;
+  answer: string;
+  choices: string[];
+  correctIndex: number;
+  timeLimitSec: number;
+  successThresholdPercent: number;
+  successHint: string;
+}
+
+/** 마피아 미션 부여 설정 */
+export interface MafiaMissionAssignConfig {
+  type: MafiaMissionType;
+  disruptTargetCount?: number;
+  voteTargetPlayerId?: string | null;
 }
