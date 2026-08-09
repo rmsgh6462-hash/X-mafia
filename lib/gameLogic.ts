@@ -1,58 +1,159 @@
-import type { GameRoom, NightResults, Player } from '@/types/game';
-import { finalizeNightQuiz } from '@/lib/game/room';
+import type {
+  GameRoom,
+  ActiveMorningEvent,
+  NightResults,
+  Player,
+  Role,
+} from '@/types/game';
+import { ROLE_LABELS } from '@/lib/game/roles';
+import {
+  buildNightDeathAnnouncement,
+  finalizeNightQuiz,
+} from '@/lib/game/room';
 
 function playersOf(room: GameRoom): Player[] {
   return Object.values(room.players ?? {});
 }
 
-/** 마피아 nightTarget 수집 후 Set으로 중복 제거 */
-export function collectMafiaKillTargets(room: GameRoom): string[] {
-  const targets = playersOf(room)
-    .filter((p) => p.isAlive && p.role === 'MAFIA' && p.nightTarget)
-    .map((p) => p.nightTarget as string);
+/**
+ * 동종 직업 밤 지목 집계 — 최다 득표, 동률이면 무작위 1명.
+ */
+export function resolveTieAction(targetIds: string[]): {
+  selectedId: string | null;
+  wasTie: boolean;
+  tallies: Record<string, number>;
+} {
+  const tallies: Record<string, number> = {};
+  targetIds.forEach((id) => {
+    if (!id) return;
+    tallies[id] = (tallies[id] ?? 0) + 1;
+  });
 
-  // 멀티킬 버프(다음 밤 총격권)가 없으면 최다 지목 1명만
-  if (!room.isMafiaBuffActive) {
-    if (targets.length === 0) return [];
-    const counts = new Map<string, number>();
-    targets.forEach((id) => counts.set(id, (counts.get(id) ?? 0) + 1));
-    let best = targets[0];
-    let bestCount = 0;
-    counts.forEach((count, id) => {
-      if (count > bestCount) {
-        best = id;
-        bestCount = count;
-      }
-    });
-    return [best];
+  const entries = Object.entries(tallies).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0 || entries[0][1] <= 0) {
+    return { selectedId: null, wasTie: false, tallies };
   }
 
+  const topCount = entries[0][1];
+  const tied = entries.filter(([, c]) => c === topCount).map(([id]) => id);
+  const wasTie = tied.length > 1;
+  const selectedId =
+    tied[Math.floor(Math.random() * tied.length)] ?? null;
+
+  return { selectedId, wasTie, tallies };
+}
+
+/** 생존한 특정 직업의 nightTarget 목록 */
+export function collectRoleNightTargets(
+  room: GameRoom,
+  role: Role,
+): string[] {
+  return playersOf(room)
+    .filter((p) => p.isAlive && p.role === role && p.nightTarget)
+    .map((p) => p.nightTarget as string);
+}
+
+/** 마피아 nightTarget 수집 — 버프 없으면 최다 1명(동률 무작위), 버프면 전원 */
+export function collectMafiaKillTargets(room: GameRoom): string[] {
+  const targets = collectRoleNightTargets(room, 'MAFIA');
+  if (!room.isMafiaBuffActive) {
+    const { selectedId } = resolveTieAction(targets);
+    return selectedId ? [selectedId] : [];
+  }
   return [...new Set(targets)];
 }
 
-/** 의사 구출 대상 (정전 시 무효) */
+/** 의사 구출 — 정전 시 무효, 다수 의사 동률 시 무작위 1명 */
 export function collectDoctorSaveTargets(room: GameRoom): string[] {
   if (room.gmEvent === 'SILENCE_NIGHT') return [];
-
-  const saves = playersOf(room)
-    .filter((p) => p.isAlive && p.role === 'DOCTOR' && p.nightTarget)
-    .map((p) => p.nightTarget as string);
-
-  return [...new Set(saves)];
+  const { selectedId } = resolveDoctorSave(room);
+  return selectedId ? [selectedId] : [];
 }
 
-/** 기자 속보 문구 */
-export function collectReporterNews(room: GameRoom): string | null {
-  const existing = room.nightResults?.reporterNews ?? null;
-  if (existing) return existing;
+/** 의사 치료 대상 확정 (동률 무작위 + 자힐 무효 지목은 제외하지 않음 — UI에서 차단) */
+export function resolveDoctorSave(room: GameRoom): {
+  selectedId: string | null;
+  wasTie: boolean;
+  tallies: Record<string, number>;
+} {
+  if (room.gmEvent === 'SILENCE_NIGHT') {
+    return { selectedId: null, wasTie: false, tallies: {} };
+  }
 
-  const reporter = playersOf(room).find(
-    (p) => p.isAlive && p.role === 'REPORTER' && p.nightTarget,
+  // 이미 자힐을 쓴 의사가 다시 자신을 지목한 경우는 무효 처리
+  const targets = playersOf(room)
+    .filter((p) => p.isAlive && p.role === 'DOCTOR' && p.nightTarget)
+    .map((p) => {
+      const targetId = p.nightTarget as string;
+      if (targetId === p.id && p.hasSelfHealed) return null;
+      return targetId;
+    })
+    .filter((id): id is string => Boolean(id));
+
+  return resolveTieAction(targets);
+}
+
+/** 기자 취재 — 동률 시 무작위, 아침 전체 공개용 실제 직업 속보 */
+export function resolveReporterInvestigation(room: GameRoom): {
+  news: string | null;
+  targetId: string | null;
+  targetRole: Role | null;
+  wasTie: boolean;
+} {
+  const { selectedId, wasTie } = resolveTieAction(
+    collectRoleNightTargets(room, 'REPORTER'),
   );
-  if (!reporter?.nightTarget) return null;
-  const target = room.players[reporter.nightTarget];
+  if (!selectedId) {
+    return { news: null, targetId: null, targetRole: null, wasTie: false };
+  }
+  const target = room.players[selectedId];
+  if (!target?.role) {
+    return {
+      news: null,
+      targetId: selectedId,
+      targetRole: null,
+      wasTie,
+    };
+  }
+  const tieNote = wasTie ? ' (기자 지목 동률 → 무작위 선정)' : '';
+  return {
+    news: `[속보] ${target.name} 님의 직업은 「${ROLE_LABELS[target.role]}」입니다.${tieNote}`,
+    targetId: selectedId,
+    targetRole: target.role,
+    wasTie,
+  };
+}
+
+/** 경찰 조사 — 동률 시 무작위, 경찰·교사만 열람 */
+export function resolvePoliceInvestigation(room: GameRoom): {
+  targetId: string;
+  targetName: string;
+  isMafia: boolean;
+  wasTie: boolean;
+} | null {
+  if (room.gmEvent === 'SILENCE_NIGHT') return null;
+
+  const { selectedId, wasTie } = resolveTieAction(
+    collectRoleNightTargets(room, 'POLICE'),
+  );
+  if (!selectedId) return null;
+  const target = room.players[selectedId];
   if (!target) return null;
-  return `[속보] ${target.name} 님 주변에서 수상한 움직임이 포착되었습니다.`;
+
+  return {
+    targetId: selectedId,
+    targetName: target.name,
+    isMafia: target.role === 'MAFIA',
+    wasTie,
+  };
+}
+
+/** @deprecated — resolveReporterInvestigation 사용 */
+export function collectReporterNews(room: GameRoom): string | null {
+  return (
+    room.nightResults?.reporterNews ??
+    resolveReporterInvestigation(room).news
+  );
 }
 
 export interface ResolveNightOptions {
@@ -62,19 +163,21 @@ export interface ResolveNightOptions {
 /**
  * 밤 세션 결과 연산
  * - 밤 퀴즈 판정 → 성공 시 아침 힌트
- * - 마피아 킬(멀티킬 시 Set)
- * - 의사 구출
+ * - 마피아 킬 / 의사 구출
+ * - 기자·경찰 동률 시 무작위 1명 확정
  * - gameState → RESULT
  */
 export function resolveNight(
   room: GameRoom,
   options: ResolveNightOptions = {},
 ): GameRoom {
-  // 미제출 포함 퀴즈 최종 판정
-  let nextRoom = finalizeNightQuiz(room);
+  const nextRoom = finalizeNightQuiz(room);
 
+  // 마피아 킬 대상
   const killTargets = collectMafiaKillTargets(nextRoom);
-  const savedIds = collectDoctorSaveTargets(nextRoom);
+
+  const doctorSave = resolveDoctorSave(nextRoom);
+  const savedIds = doctorSave.selectedId ? [doctorSave.selectedId] : [];
   const savedSet = new Set(savedIds);
 
   const deadPlayerIds = killTargets.filter((id) => {
@@ -84,27 +187,137 @@ export function resolveNight(
     return true;
   });
 
+  // 공격 대상과 의사의 보호 대상이 일치하고, 다른 희생자도 없을 때만 성공 연출을 띄운다.
+  const isDoctorDefended =
+    deadPlayerIds.length === 0 &&
+    doctorSave.selectedId !== null &&
+    killTargets.includes(doctorSave.selectedId);
+
   const quiz = nextRoom.nightQuizState;
   const quizSuccess = quiz?.outcome === 'SUCCESS';
   const quizHint =
     quizSuccess && quiz?.successHint ? quiz.successHint : null;
 
+  const reporter = resolveReporterInvestigation(nextRoom);
+  const policeReport = resolvePoliceInvestigation(nextRoom);
+
+  // 아침 공개 큐는 고정 순서(마피아 → 의사 → 기자)로 만든다.
+  // 밤에 행동을 선택하지 않았거나, 해당 직업이 이번 밤 사망했다면 큐에서 제외한다.
+  const activeEvents: ActiveMorningEvent[] = [];
+  const mafiaActor = playersOf(nextRoom).find(
+    (p) => p.isAlive && p.role === 'MAFIA' && Boolean(p.nightTarget),
+  );
+  if (mafiaActor && killTargets.length > 0) {
+    const targetId = killTargets[0] ?? mafiaActor.nightTarget;
+    activeEvents.push({
+      event: 'MAFIA_KILL',
+      actorId: mafiaActor.id,
+      targetId,
+      targetName: targetId ? nextRoom.players[targetId]?.name ?? null : null,
+    });
+  }
+
+  const doctorActor = playersOf(nextRoom).find(
+    (p) =>
+      p.isAlive &&
+      p.role === 'DOCTOR' &&
+      Boolean(p.nightTarget) &&
+      !deadPlayerIds.includes(p.id) &&
+      p.nightTarget === doctorSave.selectedId,
+  );
+  if (doctorActor && doctorSave.selectedId) {
+    activeEvents.push({
+      event: 'DOCTOR_DEFEND',
+      actorId: doctorActor.id,
+      targetId: doctorSave.selectedId,
+      targetName: nextRoom.players[doctorSave.selectedId]?.name ?? null,
+      success: isDoctorDefended,
+    });
+  }
+
+  const reporterActor = playersOf(nextRoom).find(
+    (p) =>
+      p.isAlive &&
+      p.role === 'REPORTER' &&
+      Boolean(p.nightTarget) &&
+      !deadPlayerIds.includes(p.id) &&
+      p.nightTarget === reporter.targetId,
+  );
+  if (reporterActor && reporter.news && reporter.targetId) {
+    activeEvents.push({
+      event: 'REPORTER_NEWS',
+      actorId: reporterActor.id,
+      targetId: reporter.targetId,
+      targetName: nextRoom.players[reporter.targetId]?.name ?? null,
+    });
+  }
+
+  const morningEvents = activeEvents.map(({ event }) => event);
+
+  const reveal = nextRoom.revealDeathRoles !== false;
+  const deadRoles: Record<string, Role> = {};
+  const deathAnnouncements: string[] = [];
+  deadPlayerIds.forEach((id) => {
+    const p = nextRoom.players[id];
+    if (!p) return;
+    if (reveal && p.role) deadRoles[id] = p.role;
+    deathAnnouncements.push(
+      buildNightDeathAnnouncement(p.name, p.role, reveal),
+    );
+  });
+
+  const actionLog = playersOf(nextRoom)
+    .filter(
+      (p) =>
+        p.role === 'MAFIA' ||
+        p.role === 'DOCTOR' ||
+        p.role === 'POLICE' ||
+        p.role === 'REPORTER' ||
+        p.role === 'SPIRITUALIST',
+    )
+    .map((p) => ({
+      actorId: p.id,
+      role: p.role as Role,
+      targetId: p.nightTarget,
+    }));
+
   const nightResults: NightResults = {
     deadPlayerIds,
     savedPlayerIds: savedIds.filter((id) => killTargets.includes(id)),
-    reporterNews: collectReporterNews(nextRoom),
+    activeEvents,
+    morningEvent: morningEvents[0] ?? null,
+    morningEvents,
+    deadRoles,
+    deathAnnouncements,
+    doctorSavedPlayerId: doctorSave.selectedId,
+    doctorSaveWasTie: doctorSave.wasTie,
+    isDoctorDefended,
+    reporterNews: reporter.news,
+    reporterTargetId: reporter.targetId,
+    reporterTargetRole: reporter.targetRole,
+    reporterWasTie: reporter.wasTie,
+    policeReport,
     quizHint,
     quizSuccessRate: quiz?.finalSuccessRate ?? null,
     quizOutcome: quiz?.outcome ?? null,
+    actionLog,
   };
 
   const nextPlayers: Record<string, Player> = {};
   Object.values(nextRoom.players).forEach((p) => {
     const died = deadPlayerIds.includes(p.id);
+    // 의사가 자신을 지목했으면 자힐 1회 소모 (정전이 아닐 때)
+    const usedSelfHeal =
+      p.role === 'DOCTOR' &&
+      p.isAlive &&
+      p.nightTarget === p.id &&
+      nextRoom.gmEvent !== 'SILENCE_NIGHT' &&
+      !p.hasSelfHealed;
     nextPlayers[p.id] = {
       ...p,
       isAlive: died ? false : p.isAlive,
       nightTarget: null,
+      hasSelfHealed: usedSelfHeal ? true : p.hasSelfHealed === true,
     };
   });
 
@@ -117,13 +330,13 @@ export function resolveNight(
     ...nextRoom,
     players: nextPlayers,
     nightResults,
-    currentHint: quizHint ?? nextRoom.currentHint,
+    currentHint: quizHint ?? nextRoom.currentHint ?? null,
     gameState: 'RESULT',
     votes: {},
     matchEndsAt: null,
     voteEndsAt: null,
+    voteRevoteCandidates: null,
     gmEvent: openRevive ? 'REVIVE_NIGHT' : null,
-    // 이번 밤 버프 소모
     isMafiaBuffActive: false,
   };
 }
@@ -173,7 +386,6 @@ export function dismissMorningResult(room: GameRoom): GameRoom {
   return {
     ...room,
     gameState: 'DAY_TALK',
-    // 부활 투표 미완료면 유지, 그 외 GM 이벤트 소모
     gmEvent: room.gmEvent === 'REVIVE_NIGHT' ? 'REVIVE_NIGHT' : null,
   };
 }

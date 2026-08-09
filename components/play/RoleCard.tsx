@@ -1,19 +1,23 @@
-'use client';
+﻿'use client';
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Users } from 'lucide-react';
+import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { ROLE_ACCENTS, ROLE_BLURBS, ROLE_LABELS } from '@/lib/game/roles';
-import type { MafiaMissionState, NightQuizState, Role } from '@/types/game';
+import type { MafiaMissionState, NightQuizState, Player, Role } from '@/types/game';
 
 export function RoleCard({
   role,
   nightQuiz,
   mafiaMission,
+  mafiaAllies = [],
 }: {
   role: Role;
   nightQuiz?: NightQuizState | null;
   mafiaMission?: MafiaMissionState | null;
+  /** 마피아만 — 다른 마피아 동료 목록 */
+  mafiaAllies?: Player[];
 }) {
   const [flipped, setFlipped] = useState(false);
   const isMafia = role === 'MAFIA';
@@ -63,6 +67,39 @@ export function RoleCard({
 
             {isMafia && (
               <div className="mt-auto space-y-2 pt-3">
+                <div className="rounded-lg bg-black/40 px-2.5 py-2 ring-1 ring-red-400/30">
+                  <p className="mb-1.5 flex items-center gap-1 text-[10px] font-bold text-red-200">
+                    <Users className="h-3 w-3" />
+                    마피아 동료
+                  </p>
+                  {mafiaAllies.length === 0 ? (
+                    <p className="text-[11px] text-white/60">
+                      다른 마피아가 없습니다. (혼자)
+                    </p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {mafiaAllies.map((ally) => (
+                        <li
+                          key={ally.id}
+                          className="flex items-center gap-2 text-[11px] font-bold text-white"
+                        >
+                          <CharacterAvatar
+                            avatarId={ally.avatarId}
+                            isAlive={ally.isAlive}
+                            size={22}
+                          />
+                          <span className="truncate">{ally.name}</span>
+                          <span className="shrink-0 rounded bg-red-500/80 px-1.5 py-0.5 text-[9px] font-black text-white">
+                            마피아
+                          </span>
+                          {!ally.isAlive && (
+                            <span className="text-[9px] text-white/40">탈락</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
                 {nightQuiz?.question && (
                   <div className="rounded-lg bg-black/35 px-2.5 py-2">
                     <p className="text-[10px] font-bold text-amber-200">
@@ -76,7 +113,7 @@ export function RoleCard({
                 {mafiaMission?.active && mafiaMission.description && (
                   <div className="rounded-lg bg-red-950/70 px-2.5 py-2 ring-1 ring-red-400/40">
                     <p className="text-[10px] font-bold text-red-200">
-                      X맨 비밀 미션
+                      마피아 비밀 미션
                     </p>
                     <p className="text-[11px] leading-snug text-white/90">
                       {mafiaMission.description}
@@ -87,7 +124,9 @@ export function RoleCard({
             )}
 
             {!isMafia && (
-              <p className="mt-auto text-[11px] text-white/50">다시 탭하면 숨깁니다</p>
+              <p className="mt-auto text-[11px] text-white/50">
+                동일 직업 동료의 정체는 알 수 없습니다 · 다시 탭하면 숨깁니다
+              </p>
             )}
           </div>
         </motion.div>

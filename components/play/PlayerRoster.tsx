@@ -3,6 +3,7 @@
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import { playerList } from '@/lib/game/room';
+import { visibleRoleBadgeFor } from '@/lib/game/visibility';
 import type { GameRoom, Player } from '@/types/game';
 
 export function PlayerRoster({
@@ -11,13 +12,16 @@ export function PlayerRoster({
   compact = false,
   title = '참가자',
   showRoles = false,
+  /** 학생 본인 — 있으면 마피아 동료만 배지 표시 (교사 showRoles와 별개) */
+  viewer = null,
 }: {
   room: GameRoom;
   highlightId?: string;
   compact?: boolean;
   title?: string;
-  /** 교사 화면용 — 배정된 직업 표시 */
+  /** 교사 화면용 — 배정된 직업 전부 표시 */
   showRoles?: boolean;
+  viewer?: Player | null;
 }) {
   const list = playerList(room).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
   const aliveCount = list.filter((p) => p.isAlive).length;
@@ -47,15 +51,28 @@ export function PlayerRoster({
               : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4'
           }`}
         >
-          {list.map((p) => (
-            <PlayerChip
-              key={p.id}
-              player={p}
-              highlight={p.id === highlightId}
-              compact={compact}
-              showRole={showRoles}
-            />
-          ))}
+          {list.map((p) => {
+            const badge = showRoles
+              ? p.role
+                ? ROLE_LABELS[p.role]
+                : null
+              : visibleRoleBadgeFor(viewer, p);
+            return (
+              <PlayerChip
+                key={p.id}
+                player={p}
+                highlight={p.id === highlightId}
+                compact={compact}
+                roleBadge={badge}
+                mafiaAlly={
+                  !showRoles &&
+                  viewer?.role === 'MAFIA' &&
+                  p.role === 'MAFIA' &&
+                  p.id !== viewer.id
+                }
+              />
+            );
+          })}
         </ul>
       )}
     </section>
@@ -66,21 +83,25 @@ function PlayerChip({
   player,
   highlight,
   compact,
-  showRole,
+  roleBadge,
+  mafiaAlly,
 }: {
   player: Player;
   highlight?: boolean;
   compact?: boolean;
-  showRole?: boolean;
+  roleBadge?: string | null;
+  mafiaAlly?: boolean;
 }) {
   return (
     <li
       className={`flex flex-col items-center rounded-xl px-2 py-2 text-center ${
         highlight
           ? 'bg-amber-400/20 ring-1 ring-amber-400/50'
-          : player.isAlive
-            ? 'bg-white/5'
-            : 'bg-black/40'
+          : mafiaAlly
+            ? 'bg-red-950/45 ring-1 ring-red-400/35'
+            : player.isAlive
+              ? 'bg-white/5'
+              : 'bg-black/40'
       }`}
     >
       <CharacterAvatar
@@ -95,9 +116,15 @@ function PlayerChip({
       >
         {player.name}
       </span>
-      {showRole && player.role && (
-        <span className="mt-0.5 text-[10px] font-semibold text-amber-200/90">
-          {ROLE_LABELS[player.role]}
+      {roleBadge && (
+        <span
+          className={`mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-black ${
+            mafiaAlly || roleBadge === '마피아'
+              ? 'bg-red-500/90 text-white'
+              : 'text-amber-200/90'
+          }`}
+        >
+          {mafiaAlly ? `[${roleBadge}]` : roleBadge}
         </span>
       )}
       {!player.isAlive && (

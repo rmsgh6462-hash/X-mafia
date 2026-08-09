@@ -1,5 +1,5 @@
-/** 마을 / 학교 테마 */
-export type Theme = 'VILLAGE' | 'SCHOOL';
+/** 유일한 게임 테마: 마을 */
+export type Theme = 'VILLAGE';
 
 /** 플레이어 역할 */
 export type Role =
@@ -27,16 +27,40 @@ export type GmEvent = 'HINT_BOOST' | 'SILENCE_NIGHT' | 'REVIVE_NIGHT' | null;
 /** 미션 승인 결과 */
 export type MissionOutcome = 'PENDING' | 'SUCCESS' | 'FAIL' | null;
 
+/** 아침 결과 팝업 연출 종류 */
+export type MorningEvent =
+  | 'DOCTOR_DEFEND'
+  | 'REPORTER_NEWS'
+  | 'MAFIA_KILL';
+
+/** 아침 순차 연출 큐에 전달하는 실제 밤 행동 스냅샷 */
+export interface ActiveMorningEvent {
+  event: MorningEvent;
+  actorId: string | null;
+  targetId: string | null;
+  targetName?: string | null;
+  /** 의사 연출만 사용 — 마피아 공격을 막았는지 */
+  success?: boolean;
+}
+
 /** 유령 승자 예측 (시민팀 / 마피아팀) */
 export type WinnerSide = 'CITIZEN' | 'MAFIA';
 
-/** 유령 채팅 메시지 */
+/** 유령 채팅 메시지 — rooms/{roomId}/ghostChat/{messageId} */
 export interface GhostChatMessage {
   id: string;
-  playerId: string;
-  playerName: string;
+  /** 발신자 playerId */
+  senderId: string;
+  senderName: string;
   text: string;
-  createdAt: number;
+  /** epoch ms */
+  timestamp: number;
+  /** @deprecated 하위 호환 */
+  playerId?: string;
+  /** @deprecated 하위 호환 */
+  playerName?: string;
+  /** @deprecated 하위 호환 — timestamp 사용 */
+  createdAt?: number;
 }
 
 /** 1:1 매칭 채팅 메시지 */
@@ -136,12 +160,24 @@ export interface MafiaMission {
   voteTargetPlayerId?: string | null;
 }
 
+/** 투표 동률 처리 방식 */
+export type VoteTieResolution = 'RANDOM' | 'REVOTE';
+
 /** 낮 투표 결과 */
 export interface DayVoteResult {
   eliminatedPlayerId: string | null;
   eliminatedName: string | null;
+  /** 공개된 직업 (revealDeathRoles ON일 때) */
+  eliminatedRole?: Role | null;
+  /** 전원 공지 문구 */
+  announcement?: string | null;
   wasTie: boolean;
+  /** 재투표 라운드에서 확정된 탈락인지 */
+  wasRevote?: boolean;
+  tieResolution?: VoteTieResolution;
   tallies: Record<string, number>;
+  /** voterId → targetId (유령 관전용 스냅샷) */
+  ballots?: Record<string, string>;
   resolvedAt: number;
 }
 
@@ -149,11 +185,43 @@ export interface DayVoteResult {
 export interface NightResults {
   deadPlayerIds: string[];
   savedPlayerIds: string[];
+  /** 생존·능력 사용 조건을 통과한 아침 연출 큐 (마피아 → 의사 → 기자) */
+  activeEvents?: ActiveMorningEvent[];
+  /** 새 아침 결과 팝업의 대표 이벤트 (구버전 데이터에는 없을 수 있음) */
+  morningEvent?: MorningEvent | null;
+  /** 한밤에 여러 공개 이벤트가 있으면 표시 순서를 보존한다 */
+  morningEvents?: MorningEvent[];
+  /** 습격 사망자 직업 (revealDeathRoles ON일 때 playerId → Role) */
+  deadRoles?: Record<string, Role>;
+  /** 전원 공지 문구 목록 */
+  deathAnnouncements?: string[];
+  /** 의사 최종 구출 대상 (동률 시 무작위 1명) */
+  doctorSavedPlayerId?: string | null;
+  doctorSaveWasTie?: boolean;
+  /** 마피아의 공격 대상이 의사에게 보호되어 아침까지 생존했는지 */
+  isDoctorDefended?: boolean;
+  /** 전체 공개 — 기자 취재 (실제 직업 포함) */
   reporterNews: string | null;
+  reporterTargetId?: string | null;
+  reporterTargetRole?: Role | null;
+  reporterWasTie?: boolean;
+  /** 경찰·교사만 — 마피아 여부 조사 결과 */
+  policeReport?: {
+    targetId: string;
+    targetName: string;
+    isMafia: boolean;
+    wasTie: boolean;
+  } | null;
   /** 밤 퀴즈 성공으로 공개되는 힌트 (아침 발표용) */
   quizHint: string | null;
   quizSuccessRate: number | null;
   quizOutcome: MissionOutcome;
+  /** 유령 관전용 — 아침 발표 직전 능력 지목 스냅샷 */
+  actionLog?: Array<{
+    actorId: string;
+    role: Role;
+    targetId: string | null;
+  }>;
 }
 
 /** 개별 플레이어 */
@@ -166,6 +234,8 @@ export interface Player {
   partnerId: string | null;
   avatarId: string;
   avatarIndex?: number;
+  /** 의사 자힐 1회 사용 여부 (게임 전체 1회) */
+  hasSelfHealed?: boolean;
 }
 
 /** 게임 룸 전체 상태 */
@@ -202,6 +272,12 @@ export interface GameRoom {
   votes: Record<string, string>;
   matchEndsAt: number | null;
   voteEndsAt: number | null;
+  /** 동률 시 무작위 1명 탈락 | 동률자만 재투표 */
+  voteTieResolution: VoteTieResolution;
+  /** 탈락자 직업 즉시 공개 (ON=공개, OFF=탈락만 안내) */
+  revealDeathRoles: boolean;
+  /** 재투표 대상 playerId 목록 (null이면 일반 투표) */
+  voteRevoteCandidates: string[] | null;
   dayVoteResult: DayVoteResult | null;
   createdAt: number;
   ghostChat: Record<string, GhostChatMessage>;

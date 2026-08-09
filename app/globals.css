@@ -24,3 +24,54 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@keyframes morning-screen-shake {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  12% { transform: translate3d(-7px, 3px, 0); }
+  24% { transform: translate3d(7px, -3px, 0); }
+  36% { transform: translate3d(-5px, -2px, 0); }
+  48% { transform: translate3d(5px, 2px, 0); }
+  60% { transform: translate3d(-2px, 0, 0); }
+}
+
+@keyframes morning-red-flash {
+  0% { opacity: 0; }
+  14% { opacity: 0.78; }
+  34% { opacity: 0.16; }
+  52% { opacity: 0.48; }
+  100% { opacity: 0; }
+}
+
+@keyframes morning-crosshair-lock {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(1.65) rotate(-10deg); }
+  45% { opacity: 1; transform: translate(-50%, -50%) scale(0.94) rotate(0deg); }
+  70% { opacity: 1; transform: translate(-50%, -50%) scale(1.03) rotate(0deg); }
+  100% { opacity: 0.92; transform: translate(-50%, -50%) scale(1) rotate(0deg); }
+}
+
+@keyframes morning-bullet-impact {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(2.8); }
+  42% { opacity: 1; transform: translate(-50%, -50%) scale(0.82); }
+  70% { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+  100% { opacity: 0.96; transform: translate(-50%, -50%) scale(1); }
+}
+
+.morning-screen-shake {
+  animation: morning-screen-shake 560ms cubic-bezier(.36,.07,.19,.97) both;
+}
+
+.morning-panel-shake {
+  animation: morning-screen-shake 520ms cubic-bezier(.36,.07,.19,.97) 120ms both;
+}
+
+.morning-red-flash {
+  animation: morning-red-flash 620ms ease-out both;
+}
+
+.morning-crosshair-lock {
+  animation: morning-crosshair-lock 520ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+.morning-bullet-impact {
+  animation: morning-bullet-impact 430ms cubic-bezier(.2,.8,.2,1) 120ms both;
+}

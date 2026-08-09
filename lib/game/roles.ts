@@ -1,4 +1,4 @@
-import type { Role } from '@/types/game';
+﻿import type { Role } from '@/types/game';
 
 function shuffle<T>(items: T[]): T[] {
   const arr = [...items];
@@ -88,7 +88,7 @@ export function buildRoleDeckFromCounts(
 
 export const ROLE_LABELS: Record<Role, string> = {
   CITIZEN: '시민',
-  MAFIA: 'X맨',
+  MAFIA: '마피아',
   DOCTOR: '의사',
   POLICE: '경찰',
   REPORTER: '기자',
@@ -97,11 +97,16 @@ export const ROLE_LABELS: Record<Role, string> = {
 
 export const ROLE_BLURBS: Record<Role, string> = {
   CITIZEN: '토론과 투표로 마피아를 찾아내세요.',
-  MAFIA: '정체를 숨기고 밤에 대상을 지목하세요. 서로가 마피아인지 모르며, 같은 편을 죽일 수도 있습니다.',
-  DOCTOR: '밤에 한 명을 선택해 살릴 수 있습니다.',
-  POLICE: '밤에 한 명을 조사해 마피아 여부를 확인합니다.',
-  REPORTER: '취재 대상을 고르면 다음 날 아침 속보가 공개됩니다.',
-  SPIRITUALIST: '사망자의 진짜 직업을 확인할 수 있습니다.',
+  MAFIA:
+    '밤에 대상을 지목하세요. 다른 마피아 동료는 화면에 [마피아]로 표시됩니다. 같은 편을 죽일 수도 있습니다.',
+  DOCTOR:
+    '밤에 한 명을 치료합니다. 자힐은 게임당 1회만 가능합니다. 다른 의사와는 서로를 모릅니다.',
+  POLICE:
+    '밤에 한 명을 조사해 마피아 여부를 확인합니다. 결과는 경찰과 교사만 봅니다. 다른 경찰과는 서로를 모릅니다.',
+  REPORTER:
+    '취재 대상을 고르면 다음 날 아침 실제 직업이 전원에게 공개됩니다. 다른 기자와는 서로를 모릅니다.',
+  SPIRITUALIST:
+    '사망자의 진짜 직업을 확인할 수 있습니다. 다른 영매와는 서로를 모릅니다.',
 };
 
 export const ROLE_ACCENTS: Record<Role, string> = {

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useMemo, useState } from 'react';
 import { Check, Crosshair, Target, X } from 'lucide-react';
@@ -36,7 +36,7 @@ export function NightQuizConfigForm({
   const [timeLimitSec, setTimeLimitSec] = useState(45);
   const [threshold, setThreshold] = useState(70);
   const [hint, setHint] = useState(
-    '마피아(X맨) 중 한 명은 오늘 평소보다 말이 적을 수 있습니다.',
+    '마피아 중 한 명은 오늘 평소보다 말이 적을 수 있습니다.',
   );
 
   // 직접 출제

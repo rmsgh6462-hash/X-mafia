@@ -1,9 +1,15 @@
-'use client';
+﻿'use client';
 
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { LogIn, Moon, Sun, Vote } from 'lucide-react';
+import {
+  LogIn,
+  Moon,
+  Power,
+  Sun,
+  Vote,
+} from 'lucide-react';
 import GameBackground, {
   type BackgroundPhase,
 } from '@/components/GameBackground';
@@ -11,6 +17,11 @@ import { AvatarPickerGrid } from '@/components/play/AvatarPicker';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { GhostMode } from '@/components/play/GhostMode';
 import { MatchChatPanel } from '@/components/play/MatchChatPanel';
+import {
+  getActiveMorningEvents,
+  getMorningEvents,
+  MorningSequenceModal,
+} from '@/components/play/MorningSequenceModal';
 import {
   DayMafiaMissionBanner,
   NightSessionPanel,
@@ -20,17 +31,20 @@ import { Popup } from '@/components/play/Popup';
 import { RoleCard } from '@/components/play/RoleCard';
 import { takenAvatarIds, isAvatarId, type AvatarId } from '@/lib/game/avatars';
 import { isFirebaseConfigured } from '@/lib/firebase';
+import { ROLE_LABELS } from '@/lib/game/roles';
 import {
   alivePlayers,
   castVote,
   clearPlaySession,
   joinRoom,
+  leaveRoom,
   loadPlaySession,
   peekRoom,
   playerList,
   subscribeRoom,
   type PlaySession,
 } from '@/lib/game/room';
+import { getMafiaAllies } from '@/lib/game/visibility';
 import type { GameRoom, GameState, Player, Theme } from '@/types/game';
 
 const STATE_LABELS: Record<GameState, string> = {
@@ -105,12 +119,18 @@ function PlayPageInner() {
   const nameInputRef = useRef<HTMLInputElement>(null);
 
   const [hintOpen, setHintOpen] = useState(false);
-  const [newsOpen, setNewsOpen] = useState(false);
+  const [policeOpen, setPoliceOpen] = useState(false);
+  const [voteDeathOpen, setVoteDeathOpen] = useState(false);
+  const [morningResultOpen, setMorningResultOpen] = useState(false);
   const [alertOpen, setAlertOpen] = useState(false);
   const [alertTitle, setAlertTitle] = useState('입장 실패');
   const [alertMessage, setAlertMessage] = useState('');
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const seenHintRef = useRef<string | null>(null);
-  const seenNewsRef = useRef<string | null>(null);
+  const seenPoliceRef = useRef<string | null>(null);
+  const seenVoteDeathRef = useRef<number | null>(null);
+  const seenMorningResultRef = useRef<string | null>(null);
   const joinGuardRef = useRef(false);
 
   const showAlert = (title: string, message: string) => {
@@ -214,6 +234,15 @@ function PlayPageInner() {
     };
   }, [room, session, name, avatarId]);
 
+  const morningEvents = useMemo(
+    () => getMorningEvents(room?.nightResults),
+    [room?.nightResults],
+  );
+  const morningActiveEvents = useMemo(
+    () => getActiveMorningEvents(room?.nightResults),
+    [room?.nightResults],
+  );
+
   const lobbyTaken = useMemo(() => {
     const trimmed = name.trim();
     const mine =
@@ -257,20 +286,60 @@ function PlayPageInner() {
     me?.isAlive,
   ]);
 
+  // 경찰 조사 — 경찰 역할에게만 팝업
   useEffect(() => {
-    if (!room || !me) return;
-    const news = room.nightResults?.reporterNews;
+    if (!room || !me || me.role !== 'POLICE') return;
+    const report = room.nightResults?.policeReport;
+    if (!report) return;
     const isMorning =
       room.gameState === 'RESULT' ||
       room.gameState === 'DAY_TALK' ||
       room.gameState === 'DAY_MATCH' ||
       room.gameState === 'DAY_MISSION' ||
       room.gameState === 'DAY_VOTE';
-    if (news && isMorning && seenNewsRef.current !== news) {
-      seenNewsRef.current = news;
-      setNewsOpen(true);
+    const key = `${report.targetId}:${report.isMafia}:${report.wasTie}`;
+    if (isMorning && seenPoliceRef.current !== key) {
+      seenPoliceRef.current = key;
+      setPoliceOpen(true);
     }
-  }, [room?.nightResults?.reporterNews, room?.gameState, room, me]);
+  }, [room?.nightResults?.policeReport, room?.gameState, room, me]);
+
+  // 투표 탈락 공지 — 전원 팝업
+  useEffect(() => {
+    if (!room || !me) return;
+    const result = room.dayVoteResult;
+    if (!result?.announcement) return;
+    if (seenVoteDeathRef.current === result.resolvedAt) return;
+    seenVoteDeathRef.current = result.resolvedAt;
+    setVoteDeathOpen(true);
+  }, [room?.dayVoteResult, room, me]);
+
+  // 아침 결과 공개 이벤트는 새 결과가 처음 도착한 순간 한 번만 보여 준다.
+  useEffect(() => {
+    if (
+      !room ||
+      !me ||
+      room.gameState !== 'RESULT' ||
+      (morningActiveEvents.length === 0 && morningEvents.length === 0)
+    ) {
+      if (room?.gameState !== 'RESULT') seenMorningResultRef.current = null;
+      return;
+    }
+    const key = JSON.stringify({
+      events: morningEvents,
+      result: room.nightResults,
+    });
+    if (seenMorningResultRef.current === key) return;
+    seenMorningResultRef.current = key;
+    setMorningResultOpen(true);
+  }, [
+    room?.gameState,
+    room?.nightResults,
+    room,
+    me,
+    morningEvents,
+    morningActiveEvents,
+  ]);
 
   const handleJoin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -306,17 +375,42 @@ function PlayPageInner() {
         err instanceof Error ? err.message : '입장 실패';
       const title = message.includes('존재하지 않는')
         ? '존재하지 않는 방 코드입니다'
-        : '입장 실패';
+        : message.includes('이미 다른 학생이 선택한 캐릭터')
+          ? '캐릭터 선점 실패'
+          : '입장 실패';
       showAlert(title, message);
     } finally {
       setJoining(false);
     }
   };
 
+  const handleLeaveGame = async () => {
+    if (!session || leaving) return;
+    setLeaving(true);
+    try {
+      await leaveRoom(session.pin || session.roomId, session.playerId);
+    } catch (err) {
+      console.warn('leaveRoom failed', err);
+    }
+    clearPlaySession();
+    setSession(null);
+    setRoom(null);
+    setLeaveConfirmOpen(false);
+    setLeaving(false);
+    setPin('');
+    setName('');
+    setAvatarId(null);
+  };
+
   const partner = useMemo(() => {
     if (!me?.partnerId || !room) return null;
     return room.players?.[me.partnerId] ?? null;
   }, [me, room]);
+
+  const mafiaAllies = useMemo(() => {
+    if (!room || !me || me.role !== 'MAFIA') return [];
+    return getMafiaAllies(room, me);
+  }, [room, me]);
 
   // 미입장: 로그인 폼
   if (!session) {
@@ -391,7 +485,7 @@ function PlayPageInner() {
 
           <div>
             <span className="mb-2 block text-xs font-semibold text-white/50">
-              내 캐릭터 선택 (중복 불가 · 남 16 / 여 16)
+              학생 캐릭터 32명 선택 (선착순 · 중복 불가 · 남자 16 / 여자 16)
             </span>
             <div className="max-h-72 overflow-y-auto rounded-2xl border border-white/10 bg-black/20 p-3">
               <AvatarPickerGrid
@@ -452,14 +546,25 @@ function PlayPageInner() {
         <button
           type="button"
           className="mt-8 rounded-xl bg-white/10 px-4 py-3 text-sm font-bold"
-          onClick={() => {
-            clearPlaySession();
-            setSession(null);
-            setRoom(null);
-          }}
+          onClick={() => setLeaveConfirmOpen(true)}
         >
           다시 입장하기
         </button>
+        <Popup
+          open={leaveConfirmOpen}
+          title="게임 종료"
+          accent="red"
+          onClose={() => setLeaveConfirmOpen(false)}
+          onConfirm={() => void handleLeaveGame()}
+          confirmLabel={leaving ? '종료 중…' : '정말 종료'}
+          cancelLabel="취소"
+          confirmDisabled={leaving}
+        >
+          <p>정말 게임을 종료하시겠습니까?</p>
+          <p className="mt-2 text-white/60">
+            본인만 게임에서 나가며, 다른 학생들의 게임은 계속 진행됩니다.
+          </p>
+        </Popup>
       </PlayShell>
     );
   }
@@ -502,11 +607,24 @@ function PlayPageInner() {
             생존 {aliveCount}/{totalCount}명
           </p>
           <p className="mt-0.5 font-mono text-[10px] text-white/40">PIN {room.pin}</p>
+          <button
+            type="button"
+            onClick={() => setLeaveConfirmOpen(true)}
+            className="mt-2 inline-flex items-center gap-1 rounded-lg bg-red-500/20 px-2.5 py-1 text-[11px] font-bold text-red-200 ring-1 ring-red-400/30 transition hover:bg-red-500/30"
+          >
+            <Power className="h-3 w-3" />
+            게임 종료
+          </button>
         </div>
       </header>
 
       <main className="mt-6 flex flex-1 flex-col space-y-5">
-        <PlayerRoster room={room} highlightId={me.id} compact />
+        <PlayerRoster
+          room={room}
+          highlightId={me.id}
+          compact
+          viewer={me}
+        />
 
         {isGhost ? (
           <GhostMode room={room} me={me} pin={session.pin} />
@@ -518,12 +636,32 @@ function PlayPageInner() {
                   key="role"
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="flex flex-col items-center py-2"
+                  className="flex w-full flex-col items-center gap-3 py-2"
                 >
+                  <div className="flex w-full items-center gap-3 rounded-2xl bg-white/8 p-3 ring-1 ring-white/12">
+                    <CharacterAvatar
+                      avatarId={me.avatarId}
+                      isAlive={me.isAlive}
+                      size={62}
+                      showLabel
+                    />
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">
+                        나의 캐릭터 · 직업
+                      </p>
+                      <p className="mt-1 truncate text-base font-black text-white">
+                        {me.name}
+                      </p>
+                      <p className="mt-0.5 text-sm font-bold text-amber-200">
+                        {ROLE_LABELS[me.role]}
+                      </p>
+                    </div>
+                  </div>
                   <RoleCard
                     role={me.role}
                     nightQuiz={room.nightQuizState}
                     mafiaMission={room.mafiaMissionState}
+                    mafiaAllies={mafiaAllies}
                   />
                 </motion.div>
               ) : (
@@ -623,15 +761,48 @@ function PlayPageInner() {
       </Popup>
 
       <Popup
-        open={newsOpen}
-        title="속보"
-        accent="blue"
-        onClose={() => setNewsOpen(false)}
+        open={policeOpen && me.role === 'POLICE'}
+        title="경찰 조사 결과 · 비밀"
+        accent="violet"
+        onClose={() => setPoliceOpen(false)}
+      >
+        {room.nightResults?.policeReport ? (
+          <>
+            <p className="text-base font-bold leading-snug">
+              {room.nightResults.policeReport.targetName} 님은{' '}
+              {room.nightResults.policeReport.isMafia
+                ? '마피아입니다. (O)'
+                : '마피아가 아닙니다. (X)'}
+            </p>
+            {room.nightResults.policeReport.wasTie && (
+              <p className="mt-2 text-xs text-amber-200/80">
+                경찰 지목이 동률이어서 시스템이 무작위로 한 명을 조사했습니다.
+              </p>
+            )}
+            <p className="mt-2 text-xs text-white/50">
+              경찰과 교사만 볼 수 있습니다. 다른 학생에게 말하지 마세요.
+            </p>
+          </>
+        ) : (
+          <p>조사 결과가 없습니다.</p>
+        )}
+      </Popup>
+
+      <Popup
+        open={voteDeathOpen && Boolean(room.dayVoteResult?.announcement)}
+        title="투표 탈락 공지"
+        accent="red"
+        onClose={() => setVoteDeathOpen(false)}
       >
         <p className="text-base font-bold leading-snug">
-          {room.nightResults?.reporterNews}
+          {room.dayVoteResult?.announcement}
         </p>
-        <p className="mt-2 text-xs text-white/50">기자 취재 결과 · 아침 방송</p>
+        {room.dayVoteResult?.eliminatedRole &&
+          room.revealDeathRoles !== false && (
+            <p className="mt-3 text-center text-sm font-black text-amber-200">
+              직업: {ROLE_LABELS[room.dayVoteResult.eliminatedRole]}
+            </p>
+          )}
       </Popup>
 
       <Popup
@@ -641,6 +812,32 @@ function PlayPageInner() {
         onClose={() => setAlertOpen(false)}
       >
         <p>{alertMessage}</p>
+      </Popup>
+
+      <MorningSequenceModal
+        open={morningResultOpen}
+        events={morningEvents}
+        activeEvents={morningActiveEvents}
+        result={room.nightResults}
+        players={room.players}
+        revealRoles={room.revealDeathRoles !== false}
+        onClose={() => setMorningResultOpen(false)}
+      />
+
+      <Popup
+        open={leaveConfirmOpen}
+        title="게임 종료"
+        accent="red"
+        onClose={() => !leaving && setLeaveConfirmOpen(false)}
+        onConfirm={() => void handleLeaveGame()}
+        confirmLabel={leaving ? '종료 중…' : '정말 종료'}
+        cancelLabel="취소"
+        confirmDisabled={leaving}
+      >
+        <p>정말 게임을 종료하시겠습니까?</p>
+        <p className="mt-2 text-white/60">
+          본인만 게임에서 나가며, 다른 학생들의 게임은 계속 진행됩니다.
+        </p>
       </Popup>
     </PlayShell>
   );
@@ -657,8 +854,15 @@ function VotePanel({
 }) {
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const targets = alivePlayers(room).filter((p) => p.id !== me.id);
+  const revoteIds = room.voteRevoteCandidates;
+  const targets = alivePlayers(room)
+    .filter((p) => p.id !== me.id)
+    .filter((p) => !revoteIds || revoteIds.includes(p.id));
   const myVote = room.votes?.[me.id] ?? null;
+  const mafiaAllyIds =
+    me.role === 'MAFIA'
+      ? new Set(getMafiaAllies(room, me).map((p) => p.id))
+      : new Set<string>();
   const remainSec = room.voteEndsAt
     ? Math.max(0, Math.ceil((room.voteEndsAt - now) / 1000))
     : 0;
@@ -700,10 +904,16 @@ function VotePanel({
       <p className="mt-1 text-xs text-white/50">
         {closed
           ? '투표가 마감되었습니다. 결과를 기다려 주세요.'
-          : '의심되는 사람을 선택하세요 (제한 15초)'}
+          : revoteIds
+            ? `동률 재투표 — ${revoteIds
+                .map((id) => room.players[id]?.name ?? '?')
+                .join(', ')} 중 선택 (15초)`
+            : '의심되는 사람을 선택하세요 (제한 15초)'}
       </p>
       <div className="mt-4 grid grid-cols-2 gap-3">
-        {targets.map((p) => (
+        {targets.map((p) => {
+          const isAlly = mafiaAllyIds.has(p.id);
+          return (
           <button
             key={p.id}
             type="button"
@@ -712,13 +922,21 @@ function VotePanel({
             className={`flex min-h-14 items-center justify-center gap-2 rounded-xl px-3 py-4 text-sm font-bold transition hover:brightness-110 disabled:opacity-40 ${
               myVote === p.id
                 ? 'bg-amber-400 text-stone-900'
-                : 'bg-white/10 text-white'
+                : isAlly
+                  ? 'bg-red-950/50 text-white ring-1 ring-red-400/40'
+                  : 'bg-white/10 text-white'
             }`}
           >
             <CharacterAvatar avatarId={p.avatarId} isAlive size={32} />
             <span className="truncate">{p.name}</span>
+            {isAlly && (
+              <span className="shrink-0 rounded bg-red-500 px-1 py-0.5 text-[9px] font-black text-white">
+                [마피아]
+              </span>
+            )}
           </button>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
@@ -735,6 +953,9 @@ function MorningPanel({
 }) {
   const [busy, setBusy] = useState(false);
   const deadIds = room.nightResults?.deadPlayerIds ?? [];
+  const deadRoles = room.nightResults?.deadRoles ?? {};
+  const deathAnnouncements = room.nightResults?.deathAnnouncements ?? [];
+  const reveal = room.revealDeathRoles !== false;
   const reviveOpen = room.gmEvent === 'REVIVE_NIGHT' && deadIds.length > 0 && me.isAlive;
   const myVote = room.votes?.[me.id] ?? null;
 
@@ -770,17 +991,40 @@ function MorningPanel({
       {deadIds.length === 0 ? (
         <p className="text-sm text-emerald-200">지난밤 희생자 없음</p>
       ) : (
-        <ul className="space-y-2">
-          {deadIds.map((id) => (
-            <li
-              key={id}
-              className="flex items-center justify-between rounded-xl bg-red-950/40 px-4 py-3 text-sm"
+        <>
+          <ul className="space-y-2">
+            {deadIds.map((id) => {
+              const role = deadRoles[id] ?? (reveal ? room.players[id]?.role : null);
+              return (
+                <li
+                  key={id}
+                  className="flex items-center justify-between rounded-xl bg-red-950/40 px-4 py-3 text-sm"
+                >
+                  <span className="font-bold">
+                    {room.players[id]?.name ?? '???'}
+                  </span>
+                  <span
+                    className={`rounded-md px-2 py-0.5 text-xs font-black ${
+                      role
+                        ? 'bg-amber-400/90 text-stone-900'
+                        : 'font-mono text-white/45'
+                    }`}
+                  >
+                    {role ? ROLE_LABELS[role] : '???'}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          {deathAnnouncements.map((line) => (
+            <p
+              key={line}
+              className="rounded-xl bg-black/30 px-3 py-2 text-xs font-semibold text-white/85"
             >
-              <span className="font-bold">{room.players[id]?.name ?? '???'}</span>
-              <span className="font-mono text-xs text-white/45">???</span>
-            </li>
+              {line}
+            </p>
           ))}
-        </ul>
+        </>
       )}
 
       {reviveOpen && (

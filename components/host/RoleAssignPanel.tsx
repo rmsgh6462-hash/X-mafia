@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import { Dices, UserCog } from 'lucide-react';
@@ -92,7 +92,7 @@ export function RoleAssignPanel({
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {(
               [
-                ['MAFIA', 'X맨'],
+                ['MAFIA', '마피아'],
                 ['DOCTOR', '의사'],
                 ['POLICE', '경찰'],
                 ['REPORTER', '기자'],
@@ -136,7 +136,7 @@ export function RoleAssignPanel({
           {!countsValid && (
             <p className="text-sm text-red-300">
               {counts.MAFIA < 1
-                ? 'X맨은 최소 1명 필요합니다.'
+                ? '마피아은 최소 1명 필요합니다.'
                 : `특수 직업 합(${special})이 전체(${n})를 초과합니다.`}
             </p>
           )}

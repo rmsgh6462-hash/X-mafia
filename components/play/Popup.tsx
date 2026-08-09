@@ -7,19 +7,28 @@ export function Popup({
   title,
   children,
   onClose,
+  onConfirm,
+  confirmLabel = '확인',
+  cancelLabel = '취소',
+  confirmDisabled = false,
   accent = 'amber',
 }: {
   open: boolean;
   title: string;
   children: React.ReactNode;
   onClose: () => void;
-  accent?: 'amber' | 'red' | 'blue' | 'violet';
+  onConfirm?: () => void;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  confirmDisabled?: boolean;
+  accent?: 'amber' | 'red' | 'blue' | 'violet' | 'emerald';
 }) {
   const accents = {
     amber: 'from-amber-500 to-orange-600',
     red: 'from-red-600 to-rose-800',
     blue: 'from-sky-600 to-blue-800',
     violet: 'from-violet-600 to-indigo-800',
+    emerald: 'from-emerald-500 to-cyan-700',
   };
 
   return (
@@ -48,13 +57,34 @@ export function Popup({
               {children}
             </div>
             <div className="px-5 pb-5">
-              <button
-                type="button"
-                onClick={onClose}
-                className="w-full rounded-xl bg-white py-3 text-sm font-bold text-stone-900"
-              >
-                확인
-              </button>
+              {onConfirm ? (
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    disabled={confirmDisabled}
+                    className="flex-1 rounded-xl bg-white/12 py-3 text-sm font-bold text-white transition hover:bg-white/18 disabled:opacity-50"
+                  >
+                    {cancelLabel}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onConfirm}
+                    disabled={confirmDisabled}
+                    className="flex-1 rounded-xl bg-white py-3 text-sm font-bold text-stone-900 disabled:opacity-50"
+                  >
+                    {confirmLabel}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-full rounded-xl bg-white py-3 text-sm font-bold text-stone-900"
+                >
+                  {confirmLabel}
+                </button>
+              )}
             </div>
           </motion.div>
         </motion.div>

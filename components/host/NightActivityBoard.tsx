@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { ROLE_ACCENTS, ROLE_LABELS } from '@/lib/game/roles';
@@ -28,9 +28,19 @@ function targetName(room: GameRoom, targetId: string | null): string {
 
 function policeResult(room: GameRoom, targetId: string | null): string | null {
   if (!targetId) return null;
+  // 확정된 아침 결과가 있으면 그것을 우선 표시
+  const report = room.nightResults?.policeReport;
+  if (report && room.gameState !== 'NIGHT') {
+    if (report.targetId !== targetId) {
+      return `확정 조사 대상 아님 (확정: ${report.targetName})`;
+    }
+    return report.isMafia
+      ? `확정 결과: 마피아 O${report.wasTie ? ' · 동률추첨' : ''}`
+      : `확정 결과: 마피아 아님 X${report.wasTie ? ' · 동률추첨' : ''}`;
+  }
   const t = room.players[targetId];
   if (!t) return null;
-  return t.role === 'MAFIA' ? '결과: X맨(마피아)' : '결과: 마피아 아님';
+  return t.role === 'MAFIA' ? '결과: 마피아 O' : '결과: 마피아 아님 X';
 }
 
 function spiritualistResult(
@@ -136,7 +146,31 @@ function RoleActivityCard({
           const done = Boolean(targetId) || blocked;
           let detail: string | null = null;
           if (role === 'POLICE' && targetId && !blocked) {
+            // 교사만 마피아 여부 표시
             detail = policeResult(room, targetId);
+          }
+          if (role === 'REPORTER' && targetId) {
+            const resolved = room.nightResults;
+            if (
+              resolved?.reporterTargetId &&
+              room.gameState !== 'NIGHT'
+            ) {
+              detail =
+                resolved.reporterTargetId === targetId
+                  ? `확정 취재${resolved.reporterWasTie ? ' · 동률추첨' : ''}: ${
+                      resolved.reporterTargetRole
+                        ? ROLE_LABELS[resolved.reporterTargetRole]
+                        : '???'
+                    }`
+                  : `확정 대상 아님 (→ ${
+                      room.players[resolved.reporterTargetId ?? '']?.name ?? '?'
+                    })`;
+            } else {
+              const t = room.players[targetId];
+              detail = t?.role
+                ? `취재 예정 직업: ${ROLE_LABELS[t.role]}`
+                : null;
+            }
           }
           if (role === 'SPIRITUALIST' && targetId) {
             detail = spiritualistResult(room, targetId);
@@ -159,8 +193,35 @@ function RoleActivityCard({
                 <p className="truncate text-xs text-white/65">
                   {blocked
                     ? '정전으로 행동 불가'
-                    : `${action} → ${targetName(room, targetId)}`}
+                    : `${action} → ${targetName(room, targetId)}${
+                        role === 'DOCTOR' && targetId === actor.id
+                          ? ' (자힐)'
+                          : ''
+                      }`}
                 </p>
+                {role === 'DOCTOR' && actor.hasSelfHealed && (
+                  <p className="mt-0.5 text-[10px] font-semibold text-sky-200/70">
+                    자힐 사용 완료
+                  </p>
+                )}
+                {role === 'DOCTOR' &&
+                  room.nightResults?.doctorSavedPlayerId &&
+                  room.gameState !== 'NIGHT' &&
+                  targetId && (
+                    <p className="mt-0.5 text-xs font-semibold text-amber-200">
+                      {room.nightResults.doctorSavedPlayerId === targetId
+                        ? `확정 구출${
+                            room.nightResults.doctorSaveWasTie
+                              ? ' · 동률추첨'
+                              : ''
+                          }`
+                        : `확정 아님 (→ ${
+                            room.players[
+                              room.nightResults.doctorSavedPlayerId
+                            ]?.name ?? '?'
+                          })`}
+                    </p>
+                  )}
                 {detail && (
                   <p className="mt-0.5 text-xs font-semibold text-amber-200">
                     {detail}

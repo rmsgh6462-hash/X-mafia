@@ -1,4 +1,5 @@
-import type { GameState } from '@/types/game';
+import type { GameState, MorningEvent } from '@/types/game';
+import { playGunshotSound } from '@/lib/utils/sound';
 
 type PhaseTone = {
   freqs: number[];
@@ -121,6 +122,53 @@ export function speak(text: string) {
   const utter = new SpeechSynthesisUtterance(text);
   utter.lang = 'ko-KR';
   window.speechSynthesis.speak(utter);
+}
+
+/** 아침 결과 팝업의 짧은 효과음. 브라우저 오디오 정책에 막혀도 게임은 계속 진행된다. */
+export async function playMorningEventSound(event: MorningEvent) {
+  if (typeof window === 'undefined') return;
+
+  if (event === 'MAFIA_KILL') {
+    await playGunshotSound(0.52);
+    return;
+  }
+
+  try {
+    const ctx = getCtx();
+    if (ctx.state === 'suspended') await ctx.resume();
+
+    const now = ctx.currentTime;
+    const notes: Record<MorningEvent, { freq: number; offset: number; duration: number; type: OscillatorType }[]> = {
+      REPORTER_NEWS: [
+        { freq: 1850, offset: 0, duration: 0.07, type: 'square' },
+        { freq: 1250, offset: 0.09, duration: 0.1, type: 'square' },
+      ],
+      MAFIA_KILL: [
+        { freq: 120, offset: 0, duration: 0.24, type: 'sawtooth' },
+        { freq: 78, offset: 0.06, duration: 0.3, type: 'sine' },
+      ],
+      DOCTOR_DEFEND: [
+        { freq: 392, offset: 0, duration: 0.18, type: 'triangle' },
+        { freq: 523, offset: 0.12, duration: 0.24, type: 'triangle' },
+      ],
+    };
+
+    notes[event].forEach(({ freq, offset, duration, type }) => {
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = type;
+      oscillator.frequency.setValueAtTime(freq, now + offset);
+      gain.gain.setValueAtTime(0.0001, now + offset);
+      gain.gain.exponentialRampToValueAtTime(0.055, now + offset + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + duration);
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start(now + offset);
+      oscillator.stop(now + offset + duration + 0.02);
+    });
+  } catch {
+    // 자동 재생이 차단된 브라우저에서는 시각 효과만 표시한다.
+  }
 }
 
 export function stopAllAudio() {

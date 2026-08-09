@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import { BookOpen, Send, Sparkles } from 'lucide-react';
@@ -6,11 +6,11 @@ import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { NightPanel } from '@/components/play/NightPanel';
 import { getNightQuizStats } from '@/lib/game/missions';
 import {
+  normalizeGameRoom,
   resolveNightQuizTimeout,
+  saveRoom,
   submitNightQuizAnswer,
 } from '@/lib/game/room';
-import { getFirebaseDatabase } from '@/lib/firebase';
-import { ref, set } from 'firebase/database';
 import type { GameRoom, Player } from '@/types/game';
 
 type NightTab = 'quiz' | 'ability';
@@ -63,7 +63,7 @@ export function NightSessionPanel({
         room.mafiaMissionState?.active &&
         room.mafiaMissionState.type === 'NIGHT_DISRUPT' && (
           <div className="rounded-xl bg-red-950/50 px-3 py-2 text-xs text-red-100 ring-1 ring-red-400/30">
-            <p className="font-black">X맨 밤 미션</p>
+            <p className="font-black">마피아 밤 미션</p>
             <p className="mt-1">{room.mafiaMissionState.description}</p>
             <p className="mt-1 opacity-70">
               오답·시간초과로 방해 ·{' '}
@@ -146,11 +146,9 @@ export function NightQuizPlayPanel({
     let cancelled = false;
     void (async () => {
       try {
-        const db = getFirebaseDatabase();
-        const roomRef = ref(db, `rooms/${pin}`);
-        const next = resolveNightQuizTimeout(room);
+        const next = resolveNightQuizTimeout(normalizeGameRoom(room));
         if (!cancelled && next !== room) {
-          await set(roomRef, next);
+          await saveRoom(next);
         }
       } catch {
         /* host가 처리할 수 있음 */
@@ -240,7 +238,7 @@ export function NightQuizPlayPanel({
         <MiniStatus
           name={peer?.name ?? '???'}
           avatarId={peer?.avatarId}
-          label="동료"
+          label="다른 학생"
           status={
             peerSub ? (peerSub.correct ? 'success' : 'fail') : 'pending'
           }
@@ -345,7 +343,7 @@ export function DayMafiaMissionBanner({
   }
   return (
     <section className="rounded-2xl bg-red-950/50 p-4 text-xs text-red-100 ring-1 ring-red-400/35">
-      <p className="font-black">X맨 낮 미션</p>
+      <p className="font-black">마피아 낮 미션</p>
       <p className="mt-1 text-sm">{mms.description}</p>
     </section>
   );

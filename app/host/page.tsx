@@ -23,6 +23,7 @@ import GameBackground, {
   type BackgroundPhase,
 } from '@/components/GameBackground';
 import { GmPanel } from '@/components/host/GmPanel';
+import { GhostChatMonitor } from '@/components/host/GhostChatMonitor';
 import { MatchChatMonitor } from '@/components/host/MatchChatMonitor';
 import {
   MafiaMissionAssignForm,
@@ -32,6 +33,11 @@ import {
 import { NightActivityBoard } from '@/components/host/NightActivityBoard';
 import { RoleAssignPanel } from '@/components/host/RoleAssignPanel';
 import {
+  getActiveMorningEvents,
+  getMorningEvents,
+  MorningSequenceModal,
+} from '@/components/play/MorningSequenceModal';
+import {
   RoleBoardPanel,
   RoleBoardToggle,
 } from '@/components/host/RoleBoardPanel';
@@ -40,6 +46,7 @@ import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { isFirebaseConfigured } from '@/lib/firebase';
 import { firstFreeAvatarId } from '@/lib/game/avatars';
 import { playPhaseBgm, speak, speakPhase, stopAllAudio } from '@/lib/game/audio';
+import { ROLE_LABELS } from '@/lib/game/roles';
 import {
   dismissMorningResult,
   hasAliveSpiritualist,
@@ -60,12 +67,13 @@ import {
   extendVoteTime,
   finalizeNightQuiz,
   generatePin,
-  patchRoom,
   playerList,
   resolveDayVote,
   resolveMafiaMissionState,
   resolveNightQuizTimeout,
   saveRoom,
+  setVoteTieResolution,
+  setRevealDeathRoles,
   startAssignedGame,
   startMatchPhase,
   startNightPhase,
@@ -80,6 +88,23 @@ import type {
   NightQuizConfig,
   Theme,
 } from '@/types/game';
+
+function speakAfterVoteResolve(prev: GameRoom, next: GameRoom) {
+  if (next.gameState === 'DAY_VOTE' && next.voteRevoteCandidates) {
+    const names = next.voteRevoteCandidates
+      .map((id) => next.players[id]?.name)
+      .filter(Boolean)
+      .join(', ');
+    speak(`동률입니다. ${names} 님만 재투표합니다.`);
+    return;
+  }
+  const announcement = next.dayVoteResult?.announcement;
+  if (announcement) {
+    speak(announcement);
+    return;
+  }
+  speak('투표가 종료되었습니다. 탈락자는 없습니다.');
+}
 
 function toBackgroundPhase(state: GameState): BackgroundPhase {
   if (state === 'WAITING') return 'WAITING';
@@ -104,7 +129,7 @@ function formatPin(pin: string) {
 }
 
 export default function HostPage() {
-  const [theme, setTheme] = useState<Theme>('VILLAGE');
+  const theme: Theme = 'VILLAGE';
   const [room, setRoom] = useState<GameRoom | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,8 +139,10 @@ export default function HostPage() {
   const [roleBoardOpen, setRoleBoardOpen] = useState(false);
   const [nightConfigOpen, setNightConfigOpen] = useState(false);
   const [mafiaMissionOpen, setMafiaMissionOpen] = useState(false);
+  const [morningSequenceOpen, setMorningSequenceOpen] = useState(false);
   const prevStateRef = useRef<GameState | null>(null);
   const roomIdRef = useRef<string | null>(null);
+  const seenMorningSequenceRef = useRef<string | null>(null);
 
   const players = useMemo(() => (room ? playerList(room) : []), [room]);
   const alive = useMemo(() => (room ? alivePlayers(room) : []), [room]);
@@ -126,6 +153,14 @@ export default function HostPage() {
   );
   const revivePending =
     room?.gameState === 'RESULT' && room.gmEvent === 'REVIVE_NIGHT';
+  const morningEvents = useMemo(
+    () => getMorningEvents(room?.nightResults),
+    [room?.nightResults],
+  );
+  const morningActiveEvents = useMemo(
+    () => getActiveMorningEvents(room?.nightResults),
+    [room?.nightResults],
+  );
 
   const matchRemainSec = useMemo(() => {
     if (!room?.matchEndsAt) return 0;
@@ -222,8 +257,10 @@ export default function HostPage() {
       setError(null);
     } catch (e) {
       console.warn(e);
+      const detail =
+        e instanceof Error && e.message ? e.message : '알 수 없는 오류';
       setError(
-        'Firebase 동기화 실패 — 방이 DB에 저장되지 않아 학생 입장이 안 될 수 있습니다. .env.local과 DB 규칙을 확인하세요.',
+        `Firebase 동기화 실패 — ${detail}`,
       );
     }
   }, []);
@@ -237,14 +274,29 @@ export default function HostPage() {
     void (async () => {
       const next = resolveDayVote(room);
       await commitRoom(next);
-      const name = next.dayVoteResult?.eliminatedName;
-      if (name) {
-        speak(`투표가 종료되었습니다. ${name} 님이 탈락했습니다.`);
-      } else {
-        speak('투표가 종료되었습니다. 탈락자는 없습니다.');
-      }
+      speakAfterVoteResolve(room, next);
     })();
   }, [room, now, commitRoom]);
+
+  // 교사 화면도 학생 화면과 동일한 아침 연출 큐를 한 번만 재생한다.
+  useEffect(() => {
+    if (!room || room.gameState !== 'RESULT') {
+      if (room?.gameState !== 'RESULT') {
+        seenMorningSequenceRef.current = null;
+        setMorningSequenceOpen(false);
+      }
+      return;
+    }
+    if (morningActiveEvents.length === 0 && morningEvents.length === 0) return;
+    const key = JSON.stringify({
+      roomId: room.roomId,
+      activeEvents: morningActiveEvents,
+      result: room.nightResults,
+    });
+    if (seenMorningSequenceRef.current === key) return;
+    seenMorningSequenceRef.current = key;
+    setMorningSequenceOpen(true);
+  }, [room, morningActiveEvents, morningEvents]);
 
   const enableAudio = useCallback(async () => {
     setAudioReady(true);
@@ -271,18 +323,6 @@ export default function HostPage() {
     await playPhaseBgm('WAITING');
     speakPhase('WAITING');
     setBusy(false);
-  };
-
-  const handleThemeChange = async (nextTheme: Theme) => {
-    setTheme(nextTheme);
-    if (!room) return;
-    const next = { ...room, theme: nextTheme };
-    setRoom(next);
-    try {
-      await patchRoom(room.roomId, { theme: nextTheme });
-    } catch {
-      /* local ok */
-    }
   };
 
   const runAction = async (factory: (r: GameRoom) => GameRoom, minPlayers = 0) => {
@@ -339,11 +379,16 @@ export default function HostPage() {
     const next = resolveNight(room);
     await commitRoom(next);
     const deadCount = next.nightResults?.deadPlayerIds.length ?? 0;
-    speak(
-      deadCount === 0
-        ? '아침이 되었습니다. 지난밤 희생자는 없었습니다.'
-        : `아침이 되었습니다. 지난밤 ${deadCount}명이 희생되었습니다.`,
-    );
+    const lines = next.nightResults?.deathAnnouncements;
+    if (lines && lines.length > 0) {
+      speak(lines.join(' '));
+    } else {
+      speak(
+        deadCount === 0
+          ? '아침이 되었습니다. 지난밤 희생자는 없었습니다.'
+          : `아침이 되었습니다. 지난밤 ${deadCount}명이 희생되었습니다.`,
+      );
+    }
     setBusy(false);
   };
 
@@ -406,18 +451,9 @@ export default function HostPage() {
             )}
           </div>
 
-          <div className="flex items-center gap-2 rounded-full bg-black/40 p-1 backdrop-blur-md">
-            <ThemeChip
-              active={theme === 'VILLAGE'}
-              onClick={() => void handleThemeChange('VILLAGE')}
-              label="마을 테마 🏘️"
-            />
-            <ThemeChip
-              active={theme === 'SCHOOL'}
-              onClick={() => void handleThemeChange('SCHOOL')}
-              label="학교 테마 🏫"
-            />
-          </div>
+          <span className="rounded-full bg-emerald-500/25 px-4 py-2 text-sm font-bold text-emerald-100 ring-1 ring-emerald-300/30 md:text-base">
+            마을 테마
+          </span>
 
           <div className="flex items-center gap-2 text-sm md:text-base">
             {room && (
@@ -453,6 +489,22 @@ export default function HostPage() {
                 onAnonymousTip={(h) => void handleAnonymousTip(h)}
                 onSilenceNight={() => void handleSilenceNight()}
                 onReviveNight={() => void handleReviveNight()}
+                onVoteTieResolutionChange={(mode) => {
+                  void runAction((r) => setVoteTieResolution(r, mode));
+                  speak(
+                    mode === 'REVOTE'
+                      ? '동률 시 동률자만 재투표합니다.'
+                      : '동률 시 무작위로 한 명이 탈락합니다.',
+                  );
+                }}
+                onRevealDeathRolesChange={(enabled) => {
+                  void runAction((r) => setRevealDeathRoles(r, enabled));
+                  speak(
+                    enabled
+                      ? '탈락자 직업을 즉시 공개합니다.'
+                      : '탈락자 직업을 비공개로 둡니다.',
+                  );
+                }}
               />
             </div>
           )}
@@ -553,7 +605,14 @@ export default function HostPage() {
                 </p>
               </StagePanel>
             ) : room.gameState === 'DAY_VOTE' ? (
-              <StagePanel key="vote" title="실시간 투표 · 15초">
+              <StagePanel
+                key="vote"
+                title={
+                  room.voteRevoteCandidates
+                    ? '동률 재투표 · 15초'
+                    : '실시간 투표 · 15초'
+                }
+              >
                 <div
                   className={`mb-6 font-black tabular-nums ${
                     voteRemainSec <= 5 ? 'text-red-300' : 'text-amber-300'
@@ -561,7 +620,13 @@ export default function HostPage() {
                 >
                   {voteRemainSec}
                 </div>
-                <p className="mb-6 text-sm text-white/70">초 남음</p>
+                <p className="mb-6 text-sm text-white/70">
+                  {room.voteRevoteCandidates
+                    ? `동률자만 재투표 · ${room.voteRevoteCandidates
+                        .map((id) => room.players[id]?.name ?? '?')
+                        .join(', ')}`
+                    : '초 남음'}
+                </p>
                 <VoteBoard
                   room={room}
                   alive={alive}
@@ -585,8 +650,11 @@ export default function HostPage() {
                     type="button"
                     disabled={busy}
                     onClick={() => {
-                      void runAction(resolveDayVote);
-                      speak('투표를 종료합니다.');
+                      void runAction((r) => {
+                        const next = resolveDayVote(r);
+                        speakAfterVoteResolve(r, next);
+                        return next;
+                      });
                     }}
                     className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-3 text-sm font-black text-white hover:bg-red-500 disabled:opacity-50"
                   >
@@ -698,6 +766,11 @@ export default function HostPage() {
                 live={room.gameState === 'DAY_MATCH'}
               />
             )}
+
+          {/* 유령 채팅 실시간 모니터링 */}
+          {room && room.gameState !== 'WAITING' && (
+            <GhostChatMonitor room={room} />
+          )}
 
           {error && (
             <p className="mt-6 max-w-xl rounded-lg bg-red-950/70 px-4 py-2 text-center text-sm text-red-100">
@@ -850,9 +923,7 @@ export default function HostPage() {
                     onClick={() => {
                       void runAction((r) => {
                         const next = resolveDayVote(r);
-                        const name = next.dayVoteResult?.eliminatedName;
-                        if (name) speak(`${name} 님이 탈락했습니다.`);
-                        else speak('탈락자는 없습니다.');
+                        speakAfterVoteResolve(r, next);
                         return next;
                       });
                     }}
@@ -992,32 +1063,20 @@ export default function HostPage() {
             </div>
           </div>
         )}
+
+        {room && (
+          <MorningSequenceModal
+            open={morningSequenceOpen}
+            events={morningEvents}
+            activeEvents={morningActiveEvents}
+            result={room.nightResults}
+            players={room.players}
+            revealRoles={room.revealDeathRoles !== false}
+            onClose={() => setMorningSequenceOpen(false)}
+          />
+        )}
       </div>
     </GameBackground>
-  );
-}
-
-function ThemeChip({
-  active,
-  onClick,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full px-4 py-2 text-sm font-bold transition md:text-base ${
-        active
-          ? 'bg-white text-stone-900 shadow'
-          : 'text-white/75 hover:bg-white/10 hover:text-white'
-      }`}
-    >
-      {label}
-    </button>
   );
 }
 
@@ -1057,6 +1116,11 @@ function DayVoteResultBanner({
   const eliminated = result.eliminatedPlayerId
     ? room.players[result.eliminatedPlayerId]
     : null;
+  const reveal = room.revealDeathRoles !== false;
+  const roleLabel =
+    reveal && result.eliminatedRole
+      ? ROLE_LABELS[result.eliminatedRole]
+      : null;
 
   return (
     <div className="space-y-5">
@@ -1074,13 +1138,28 @@ function DayVoteResultBanner({
                 {eliminated.name}
               </span>
             </span>
-            <span className="rounded-md bg-black/40 px-3 py-1 font-mono text-sm font-bold tracking-widest text-white/55">
-              ???
+            <span
+              className={`rounded-md px-3 py-1 font-mono text-sm font-bold tracking-widest ${
+                roleLabel
+                  ? 'bg-amber-400/90 text-stone-900'
+                  : 'bg-black/40 text-white/55'
+              }`}
+            >
+              {roleLabel ?? '???'}
             </span>
           </div>
+          {result.announcement && (
+            <p className="mx-auto max-w-xl text-base font-semibold text-white/90">
+              {result.announcement}
+            </p>
+          )}
           {result.wasTie && (
             <p className="text-sm text-amber-200/80">
-              동점 — 최다 득표자 중 무작위로 1명 탈락
+              {result.wasRevote
+                ? '재투표 후에도 동률 — 무작위로 1명 탈락'
+                : result.tieResolution === 'REVOTE'
+                  ? '동률 — 재투표 후 확정'
+                  : '동점 — 최다 득표자 중 무작위로 1명 탈락'}
             </p>
           )}
         </>
@@ -1116,7 +1195,11 @@ function MorningResultStage({
 }) {
   const deadIds = room.nightResults?.deadPlayerIds ?? [];
   const savedIds = room.nightResults?.savedPlayerIds ?? [];
+  const deadRoles = room.nightResults?.deadRoles ?? {};
+  const deathAnnouncements = room.nightResults?.deathAnnouncements ?? [];
+  const reveal = room.revealDeathRoles !== false;
   const news = room.nightResults?.reporterNews;
+  const policeReport = room.nightResults?.policeReport;
   const quizHint = room.nightResults?.quizHint;
   const quizRate = room.nightResults?.quizSuccessRate;
   const quizOutcome = room.nightResults?.quizOutcome;
@@ -1157,6 +1240,8 @@ function MorningResultStage({
             <ul className="mx-auto flex max-w-lg flex-col gap-3">
               {deadIds.map((id, index) => {
                 const p = room.players[id];
+                const role = deadRoles[id] ?? (reveal ? p?.role : null);
+                const roleLabel = role ? ROLE_LABELS[role] : null;
                 return (
                   <motion.li
                     key={id}
@@ -1175,20 +1260,48 @@ function MorningResultStage({
                         {p?.name ?? '???'}
                       </span>
                     </span>
-                    <span className="rounded-md bg-black/40 px-3 py-1 font-mono text-sm font-bold tracking-widest text-white/55">
-                      ???
+                    <span
+                      className={`rounded-md px-3 py-1 font-mono text-sm font-bold tracking-widest ${
+                        roleLabel
+                          ? 'bg-amber-400/90 text-stone-900'
+                          : 'bg-black/40 text-white/55'
+                      }`}
+                    >
+                      {roleLabel ?? '???'}
                     </span>
                   </motion.li>
                 );
               })}
             </ul>
-            <p className="mt-3 text-xs text-white/45">탈락자 직업은 비공개 (???)</p>
+            {deathAnnouncements.length > 0 && (
+              <div className="mx-auto mt-4 max-w-xl space-y-2 text-left">
+                {deathAnnouncements.map((line) => (
+                  <p
+                    key={line}
+                    className="rounded-xl bg-black/35 px-4 py-2 text-sm font-semibold text-white/90"
+                  >
+                    {line}
+                  </p>
+                ))}
+              </div>
+            )}
+            {!reveal && (
+              <p className="mt-3 text-xs text-white/45">
+                탈락자 직업은 비공개 (???)
+              </p>
+            )}
           </div>
         )}
 
         {savedIds.length > 0 && (
           <p className="text-sm text-sky-200/90">
-            의사 구출로 살아난 지목: {savedIds.length}명
+            의사 구출로 살아난 지목:{' '}
+            {savedIds
+              .map((id) => room.players[id]?.name ?? '?')
+              .join(', ')}
+            {room.nightResults?.doctorSaveWasTie
+              ? ' (의사 지목 동률 → 무작위)'
+              : ''}
           </p>
         )}
 
@@ -1200,9 +1313,36 @@ function MorningResultStage({
             className="mx-auto max-w-xl rounded-xl bg-sky-950/50 px-4 py-3 text-left ring-1 ring-sky-400/30"
           >
             <p className="text-xs font-bold uppercase tracking-wider text-sky-200/80">
-              속보
+              기자 속보 · 전체 공개
             </p>
             <p className="mt-1 text-base font-semibold text-white">{news}</p>
+            {room.nightResults?.reporterWasTie && (
+              <p className="mt-1 text-xs text-white/50">
+                기자 지목 동률 → 무작위 선정
+              </p>
+            )}
+          </motion.div>
+        )}
+
+        {policeReport && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.95 }}
+            className="mx-auto max-w-xl rounded-xl bg-indigo-950/55 px-4 py-3 text-left ring-1 ring-indigo-400/35"
+          >
+            <p className="text-xs font-bold uppercase tracking-wider text-indigo-200/80">
+              경찰 조사 · 교사·경찰만
+            </p>
+            <p className="mt-1 text-base font-semibold text-white">
+              {policeReport.targetName} →{' '}
+              {policeReport.isMafia ? '마피아 O' : '마피아 X'}
+            </p>
+            {policeReport.wasTie && (
+              <p className="mt-1 text-xs text-white/50">
+                경찰 지목 동률 → 무작위 조사
+              </p>
+            )}
           </motion.div>
         )}
 

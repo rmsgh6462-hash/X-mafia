@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Bolt, Ghost, MessageSquareWarning, ZapOff } from 'lucide-react';
-import type { GameRoom, GmEvent } from '@/types/game';
+import { Bolt, Eye, EyeOff, Ghost, MessageSquareWarning, Vote, ZapOff } from 'lucide-react';
+import type { GameRoom, GmEvent, VoteTieResolution } from '@/types/game';
 
 export function GmPanel({
   room,
@@ -11,6 +11,8 @@ export function GmPanel({
   onAnonymousTip,
   onSilenceNight,
   onReviveNight,
+  onVoteTieResolutionChange,
+  onRevealDeathRolesChange,
 }: {
   room: GameRoom;
   disabled?: boolean;
@@ -18,10 +20,14 @@ export function GmPanel({
   onAnonymousTip: (hint: string) => void;
   onSilenceNight: () => void;
   onReviveNight: () => void;
+  onVoteTieResolutionChange: (mode: VoteTieResolution) => void;
+  onRevealDeathRolesChange: (enabled: boolean) => void;
 }) {
   const [hint, setHint] = useState('');
 
   const active = room.gmEvent;
+  const tieMode = room.voteTieResolution ?? 'RANDOM';
+  const revealRoles = room.revealDeathRoles !== false;
 
   return (
     <aside className="w-full max-w-md rounded-2xl border border-amber-500/25 bg-stone-950/75 p-4 shadow-xl backdrop-blur-md">
@@ -33,6 +39,73 @@ export function GmPanel({
       </div>
 
       <div className="space-y-3">
+        {/* 투표 동률 처리 */}
+        <div className="rounded-xl bg-white/5 p-3">
+          <p className="mb-2 flex items-center gap-1.5 text-xs font-bold text-white/70">
+            <Vote className="h-3.5 w-3.5 text-amber-300" />
+            투표 동률 처리
+          </p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <TieModeButton
+              active={tieMode === 'RANDOM'}
+              disabled={disabled}
+              label="무작위 1명 탈락"
+              hint="동률자 중 랜덤"
+              onClick={() => onVoteTieResolutionChange('RANDOM')}
+            />
+            <TieModeButton
+              active={tieMode === 'REVOTE'}
+              disabled={disabled}
+              label="동률자 재투표"
+              hint="동률자만 15초 재투표"
+              onClick={() => onVoteTieResolutionChange('REVOTE')}
+            />
+          </div>
+          {room.voteRevoteCandidates && (
+            <p className="mt-2 text-[11px] font-medium text-amber-200/80">
+              재투표 진행 중 ·{' '}
+              {room.voteRevoteCandidates
+                .map((id) => room.players[id]?.name ?? '?')
+                .join(', ')}
+            </p>
+          )}
+        </div>
+
+        {/* 탈락자 직업 공개 */}
+        <div className="rounded-xl bg-white/5 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="flex items-center gap-1.5 text-xs font-bold text-white/70">
+              {revealRoles ? (
+                <Eye className="h-3.5 w-3.5 text-amber-300" />
+              ) : (
+                <EyeOff className="h-3.5 w-3.5 text-white/40" />
+              )}
+              탈락자 직업 즉시 공개
+            </p>
+            <button
+              type="button"
+              disabled={disabled}
+              role="switch"
+              aria-checked={revealRoles}
+              onClick={() => onRevealDeathRolesChange(!revealRoles)}
+              className={`relative h-7 w-12 shrink-0 rounded-full transition disabled:opacity-40 ${
+                revealRoles ? 'bg-amber-400' : 'bg-white/20'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition ${
+                  revealRoles ? 'left-5' : 'left-0.5'
+                }`}
+              />
+            </button>
+          </div>
+          <p className="mt-1.5 text-[10px] text-white/45">
+            {revealRoles
+              ? 'ON — 투표·밤 탈락 시 실제 직업을 전원에게 공개'
+              : 'OFF — 탈락 사실만 안내 (직업 ???)'}
+          </p>
+        </div>
+
         {/* 익명 제보 */}
         <div className="rounded-xl bg-white/5 p-3">
           <label className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-white/70">
@@ -80,7 +153,7 @@ export function GmPanel({
           onClick={onReviveNight}
           title={
             spiritualistAlive
-              ? '기회의 밤 — 사망자 부활 투표'
+              ? '기회의 밤 — 사망자 부활 투표 예정'
               : '생존 영매가 있을 때만 사용 가능'
           }
           className={`flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-35 ${
@@ -97,6 +170,36 @@ export function GmPanel({
         </button>
       </div>
     </aside>
+  );
+}
+
+function TieModeButton({
+  active,
+  disabled,
+  label,
+  hint,
+  onClick,
+}: {
+  active: boolean;
+  disabled?: boolean;
+  label: string;
+  hint: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={`rounded-lg px-3 py-2.5 text-left transition disabled:opacity-40 ${
+        active
+          ? 'bg-amber-400/20 ring-2 ring-amber-400/50'
+          : 'bg-black/30 hover:bg-black/45'
+      }`}
+    >
+      <span className="block text-xs font-bold text-white">{label}</span>
+      <span className="block text-[10px] text-white/50">{hint}</span>
+    </button>
   );
 }
 
