@@ -1,0 +1,136 @@
+'use client';
+
+import { useState } from 'react';
+import { Bolt, Ghost, MessageSquareWarning, ZapOff } from 'lucide-react';
+import type { GameRoom, GmEvent } from '@/types/game';
+
+export function GmPanel({
+  room,
+  disabled,
+  spiritualistAlive,
+  onAnonymousTip,
+  onSilenceNight,
+  onReviveNight,
+}: {
+  room: GameRoom;
+  disabled?: boolean;
+  spiritualistAlive: boolean;
+  onAnonymousTip: (hint: string) => void;
+  onSilenceNight: () => void;
+  onReviveNight: () => void;
+}) {
+  const [hint, setHint] = useState('');
+
+  const active = room.gmEvent;
+
+  return (
+    <aside className="w-full max-w-md rounded-2xl border border-amber-500/25 bg-stone-950/75 p-4 shadow-xl backdrop-blur-md">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h3 className="text-sm font-black tracking-wide text-amber-200">
+          GM 특수 제어 패널
+        </h3>
+        <GmBadge event={active} />
+      </div>
+
+      <div className="space-y-3">
+        {/* 익명 제보 */}
+        <div className="rounded-xl bg-white/5 p-3">
+          <label className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-white/70">
+            <MessageSquareWarning className="h-3.5 w-3.5 text-amber-300" />
+            익명 제보
+          </label>
+          <textarea
+            value={hint}
+            onChange={(e) => setHint(e.target.value)}
+            rows={2}
+            placeholder="힌트를 입력하세요…"
+            className="w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30 focus:border-amber-400/50"
+          />
+          <button
+            type="button"
+            disabled={disabled || !hint.trim()}
+            onClick={() => {
+              onAnonymousTip(hint.trim());
+              setHint('');
+            }}
+            className="mt-2 w-full rounded-lg bg-amber-400 py-2 text-sm font-bold text-stone-900 disabled:opacity-40"
+          >
+            힌트 즉시 살포
+          </button>
+        </div>
+
+        <button
+          type="button"
+          disabled={disabled || room.gameState === 'WAITING'}
+          onClick={onSilenceNight}
+          className={`flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold transition disabled:opacity-35 ${
+            active === 'SILENCE_NIGHT'
+              ? 'bg-slate-600 text-white ring-2 ring-slate-300/40'
+              : 'bg-slate-800 text-slate-100 hover:bg-slate-700'
+          }`}
+        >
+          <ZapOff className="h-4 w-4" />
+          정전 발생
+          <span className="text-[11px] font-medium opacity-70">경찰·의사 무효</span>
+        </button>
+
+        <button
+          type="button"
+          disabled={disabled || !spiritualistAlive || room.gameState === 'WAITING'}
+          onClick={onReviveNight}
+          title={
+            spiritualistAlive
+              ? '기회의 밤 — 사망자 부활 투표'
+              : '생존 영매가 있을 때만 사용 가능'
+          }
+          className={`flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-35 ${
+            active === 'REVIVE_NIGHT'
+              ? 'bg-violet-600 text-white ring-2 ring-violet-300/40'
+              : 'bg-violet-950 text-violet-100 hover:bg-violet-900'
+          }`}
+        >
+          <Ghost className="h-4 w-4" />
+          기회의 밤
+          {!spiritualistAlive && (
+            <span className="text-[11px] font-medium opacity-70">영매 필요</span>
+          )}
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function GmBadge({ event }: { event: GmEvent }) {
+  if (!event) {
+    return (
+      <span className="rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/45">
+        이벤트 없음
+      </span>
+    );
+  }
+
+  const labels: Record<Exclude<GmEvent, null>, { text: string; className: string }> = {
+    HINT_BOOST: {
+      text: '익명 제보',
+      className: 'bg-amber-500/20 text-amber-200',
+    },
+    SILENCE_NIGHT: {
+      text: '정전',
+      className: 'bg-slate-500/30 text-slate-100',
+    },
+    REVIVE_NIGHT: {
+      text: '기회의 밤',
+      className: 'bg-violet-500/25 text-violet-100',
+    },
+  };
+
+  const item = labels[event];
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold ${item.className}`}
+    >
+      <Bolt className="h-3 w-3" />
+      {item.text}
+    </span>
+  );
+}
