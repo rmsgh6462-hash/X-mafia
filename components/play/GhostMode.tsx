@@ -243,6 +243,9 @@ function NightSpectatePanel({
   const silenced = room.gmEvent === 'SILENCE_NIGHT';
   const nightResults = room.nightResults;
   const canSeePolice = me.role === 'POLICE';
+  const resultDeadIds = nightResults?.deadPlayerIds ?? [];
+  const resultSavedIds = nightResults?.savedPlayerIds ?? [];
+  const resultActionLog = nightResults?.actionLog ?? [];
 
   const groups = NIGHT_ROLES.map((role) => ({
     role,
@@ -291,10 +294,10 @@ function NightSpectatePanel({
           </ul>
         )}
 
-        {!isNight && nightResults?.actionLog && nightResults.actionLog.length > 0 && (
+        {!isNight && resultActionLog.length > 0 && (
           <ul className="mb-2 space-y-2">
             <p className="text-[11px] font-bold text-white/50">지난 밤 지목 기록</p>
-            {nightResults.actionLog.map((entry) => {
+            {resultActionLog.map((entry) => {
               const actor = room.players[entry.actorId];
               if (!actor) return null;
               return (
@@ -311,31 +314,27 @@ function NightSpectatePanel({
           </ul>
         )}
 
-        {nightResults && (room.gameState === 'RESULT' || nightResults.deadPlayerIds) && (
+        {nightResults && (room.gameState === 'RESULT' || resultDeadIds.length > 0) && (
           <div className="mt-2 space-y-2 rounded-xl bg-red-950/40 p-3 ring-1 ring-red-400/25">
             <p className="text-xs font-black text-red-200">아침 발표 요약</p>
             <p className="text-xs text-white/75">
               희생:{' '}
-              {nightResults.deadPlayerIds.length === 0
+              {resultDeadIds.length === 0
                 ? '없음'
-                : nightResults.deadPlayerIds
-                    .map((id) => nameOf(room, id))
-                    .join(', ')}
+                : resultDeadIds.map((id) => nameOf(room, id)).join(', ')}
             </p>
             <p className="text-xs text-white/75">
               구출 성공:{' '}
-              {nightResults.savedPlayerIds.length === 0
+              {resultSavedIds.length === 0
                 ? '없음'
-                : nightResults.savedPlayerIds
-                    .map((id) => nameOf(room, id))
-                    .join(', ')}
+                : resultSavedIds.map((id) => nameOf(room, id)).join(', ')}
             </p>
             {nightResults.reporterNews && (
               <p className="text-xs text-sky-200">{nightResults.reporterNews}</p>
             )}
             {canSeePolice && nightResults.policeReport && (
               <p className="text-xs text-indigo-200">
-                경찰 조사: {nightResults.policeReport.targetName} →{' '}
+                경찰 조사: {nightResults.policeReport.targetName ?? '???'} →{' '}
                 {nightResults.policeReport.isMafia ? '마피아 O' : '마피아 X'}
               </p>
             )}

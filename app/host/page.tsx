@@ -291,31 +291,13 @@ export default function HostPage() {
     })();
   }, [room, now, commitRoom]);
 
-  // 교사 화면도 학생 화면과 동일한 아침 연출 큐를 한 번만 재생한다.
+  // 교사 대시보드는 MorningResultStage로 결과만 표시 (연출 모달은 학생/전광판용)
   useEffect(() => {
-    if (!room || room.gameState !== 'RESULT') {
-      if (room?.gameState !== 'RESULT') {
-        seenMorningSequenceRef.current = null;
-        setMorningSequenceOpen(false);
-      }
-      return;
+    if (room?.gameState !== 'RESULT') {
+      seenMorningSequenceRef.current = null;
+      setMorningSequenceOpen(false);
     }
-    if (morningActiveEvents.length === 0 && morningEvents.length === 0) return;
-    const key = [
-      room.roomId,
-      room.currentRound,
-      morningActiveEvents.map((e) => e.event).join(','),
-      morningEvents.join(','),
-      (room.nightResults?.deadPlayerIds ?? []).join(','),
-    ].join('|');
-    if (seenMorningSequenceRef.current === key) return;
-    seenMorningSequenceRef.current = key;
-    // 배경 전환이 끝난 뒤 연출을 열어 메모리 피크를 줄인다
-    const timer = window.setTimeout(() => {
-      setMorningSequenceOpen(true);
-    }, 350);
-    return () => window.clearTimeout(timer);
-  }, [room, morningActiveEvents, morningEvents]);
+  }, [room?.gameState]);
 
   const enableAudio = useCallback(async () => {
     setAudioReady(true);
@@ -398,8 +380,8 @@ export default function HostPage() {
     try {
       const next = resolveNight(room);
       await commitRoom(next);
-      const deadCount = next.nightResults?.deadPlayerIds.length ?? 0;
-      const lines = next.nightResults?.deathAnnouncements;
+      const deadCount = (next.nightResults?.deadPlayerIds ?? []).length;
+      const lines = next.nightResults?.deathAnnouncements ?? [];
       if (lines && lines.length > 0) {
         speak(lines.join(' '));
       } else if (next.gameState === 'ENDED') {
@@ -934,16 +916,6 @@ export default function HostPage() {
             </div>
 
             <div className="flex flex-wrap items-center justify-center gap-2">
-              {!room && (
-                <ControlBtn
-                  icon={<QrCode className="h-4 w-4" />}
-                  label="방 생성"
-                  disabled={busy}
-                  onClick={() => void handleCreateRoom()}
-                  accent="amber"
-                />
-              )}
-
               {room?.gameState === 'WAITING' && (
                 <>
                   <ControlBtn
@@ -1193,7 +1165,7 @@ export default function HostPage() {
           </div>
         )}
 
-        {room && (
+        {room && morningSequenceOpen && (
           <MorningSequenceModal
             open={morningSequenceOpen}
             events={morningEvents}

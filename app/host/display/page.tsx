@@ -40,17 +40,7 @@ import type {
   GameState,
   Player,
   PlayerGender,
-  Role,
 } from '@/types/game';
-
-const ROLE_IMAGES: Record<Role, string> = {
-  CITIZEN: '/images/roles/citizen.png',
-  MAFIA: '/images/roles/mafia.png',
-  DOCTOR: '/images/roles/doctor.png',
-  POLICE: '/images/roles/police.png',
-  REPORTER: '/images/roles/reporter.png',
-  SPIRITUALIST: '/images/roles/spiritualist.png',
-};
 
 const STATE_LABELS: Record<GameState, string> = {
   WAITING: '입장 대기',
@@ -77,18 +67,6 @@ function resolveGender(
   if (explicitGender === 'boy' || explicitGender === 'girl') return explicitGender;
   if (player?.gender === 'boy' || player?.gender === 'girl') return player.gender;
   return playerGenderFromAvatarId(player?.avatarId);
-}
-
-function getFallenImage(player: Player | null | undefined): string {
-  return resolveGender(player) === 'girl'
-    ? '/images/eliminated_girl.png'
-    : '/images/eliminated_boy.png';
-}
-
-function getRescueImage(gender: PlayerGender | null | undefined): string {
-  return gender === 'girl'
-    ? '/illustrations/doctor-rescue-girl.png'
-    : '/illustrations/doctor-rescue-boy.png';
 }
 
 /**
@@ -174,12 +152,13 @@ function fallbackPublicMorningEvents(
   if (active.length > 0) return active;
 
   return getMorningEvents(result).map((event) => {
+    const deadPlayerIds = result.deadPlayerIds ?? [];
     const targetId =
       event === 'DOCTOR_DEFEND'
         ? result.doctorSavedPlayerId ?? null
         : event === 'REPORTER_NEWS'
           ? result.reporterTargetId ?? null
-          : result.deadPlayerIds[0] ?? null;
+          : deadPlayerIds[0] ?? null;
     const target = targetId ? room.players[targetId] : null;
     return {
       event,
@@ -310,10 +289,11 @@ function PublicMorningEvent({
   const target = event.targetId ? room.players[event.targetId] : null;
   const targetName = event.targetName ?? target?.name ?? '학생';
   const targetGender = resolveGender(target, event.targetGender);
-  const wasKilled = Boolean(event.targetId && room.nightResults?.deadPlayerIds.includes(event.targetId));
+  const wasKilled = Boolean(
+    event.targetId && (room.nightResults?.deadPlayerIds ?? []).includes(event.targetId),
+  );
 
   if (event.event === 'MAFIA_KILL') {
-    const fallenImage = getFallenImage(target);
     return (
       <motion.section
         key="public-mafia-kill"
@@ -323,14 +303,12 @@ function PublicMorningEvent({
       >
         <div className="absolute inset-x-0 top-0 h-2 bg-gradient-to-r from-red-700 via-rose-300 to-red-700" />
         <div className="grid items-center gap-8 p-6 sm:p-10 lg:grid-cols-[1.25fr_1fr] lg:p-14">
-          <div className="relative overflow-hidden rounded-3xl border border-red-200/25 bg-black/45 shadow-2xl shadow-red-950/50">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={wasKilled ? fallenImage : '/images/eliminated_boy.png'}
-              alt={`${targetName} 공격 대상 공개 장면`}
-              className="h-64 w-full object-cover grayscale-[.62] sepia-[.18] brightness-[.72] sm:h-[25rem]"
-              decoding="async"
-              draggable={false}
+          <div className="relative flex h-64 items-center justify-center overflow-hidden rounded-3xl border border-red-200/25 bg-[radial-gradient(circle_at_50%_45%,rgba(127,29,29,0.85),rgba(11,10,25,0.92)_70%)] shadow-2xl shadow-red-950/50 sm:h-[25rem]">
+            <CharacterAvatar
+              avatarId={target?.avatarId}
+              isAlive={!wasKilled}
+              size={140}
+              className="relative z-10"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-red-950/20" />
             <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-red-100 drop-shadow-[0_0_18px_rgba(248,113,113,.9)]">
@@ -369,14 +347,17 @@ function PublicMorningEvent({
       >
         <div className="absolute inset-x-0 top-0 h-2 bg-gradient-to-r from-cyan-300 via-emerald-200 to-cyan-300" />
         <div className="relative grid items-center gap-8 p-6 sm:p-10 lg:grid-cols-[1.3fr_1fr] lg:p-14">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={getRescueImage(targetGender)}
-            alt={`의사가 ${targetGender === 'girl' ? '여학생' : '남학생'}을 구조하는 장면`}
-            className="h-64 w-full rounded-3xl object-cover object-center shadow-2xl shadow-emerald-950/60 sm:h-[25rem]"
-            decoding="async"
-            draggable={false}
-          />
+          <div className="relative flex h-64 items-center justify-center overflow-hidden rounded-3xl bg-[radial-gradient(circle_at_50%_30%,rgba(16,185,129,0.35),rgba(6,78,59,0.95)_65%)] shadow-2xl shadow-emerald-950/60 sm:h-[25rem]">
+            <CharacterAvatar
+              avatarId={target?.avatarId}
+              isAlive
+              size={140}
+              className="relative z-10 ring-4 ring-emerald-300/45"
+            />
+            <div className="absolute bottom-6 rounded-full border border-emerald-100/50 bg-emerald-950/60 p-3 text-emerald-100">
+              <HeartPulse className="h-8 w-8" strokeWidth={1.8} />
+            </div>
+          </div>
           <div className="text-center lg:text-left">
             <div className="flex items-center justify-center gap-3 text-sm font-black uppercase tracking-[0.3em] text-emerald-100 lg:justify-start sm:text-lg">
               <ShieldCheck className="h-7 w-7 animate-pulse" />
@@ -400,7 +381,6 @@ function PublicMorningEvent({
 
   const reporterRole = room.nightResults?.reporterTargetRole ?? null;
   const roleLabel = reporterRole ? ROLE_LABELS[reporterRole] : '확인된 직업';
-  const roleImage = reporterRole ? ROLE_IMAGES[reporterRole] : ROLE_IMAGES.CITIZEN;
 
   return (
     <motion.section
@@ -435,15 +415,14 @@ function PublicMorningEvent({
           {targetName}의 충격적 정체 밝혀져!
         </h1>
         <div className="mx-auto mt-8 grid max-w-3xl items-center gap-7 border-y-4 border-double border-[#2b2017]/80 py-7 sm:grid-cols-[14rem_1fr] sm:text-left">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={roleImage}
-            alt="기자 취재 결과 직업 대표 이미지"
-            className="mx-auto aspect-square w-44 object-cover shadow-xl sm:w-56"
-            style={{ filter: 'sepia(.72) saturate(.75) contrast(1.08)' }}
-            decoding="async"
-            draggable={false}
-          />
+          <div className="mx-auto w-44 border-[5px] border-[#d7bd8c] bg-[#d7bd8c] p-2 shadow-xl sm:w-56">
+            <CharacterAvatar
+              avatarId={target?.avatarId}
+              isAlive
+              size={160}
+              className="mx-auto"
+            />
+          </div>
           <div>
             <p className="text-xl font-bold text-[#594431] sm:text-2xl">{targetName} 님의 진짜 직업은</p>
             <p className="mt-2 font-serif text-5xl font-black text-[#8d2b20] sm:text-7xl">{roleLabel}</p>
@@ -469,13 +448,10 @@ function PublicEliminatedStrip({ room }: { room: GameRoom }) {
       <div className="flex flex-wrap justify-center gap-3 sm:gap-5">
         {eliminated.map((player) => (
           <div key={player.id} className="flex items-center gap-2 rounded-xl bg-red-950/55 px-2 py-2 ring-1 ring-red-300/20 sm:gap-3 sm:px-3">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={getFallenImage(player)}
-              alt={`${player.name} 탈락 일러스트`}
-              className="h-12 w-20 rounded-lg object-cover grayscale-[.65] sepia-[.2] brightness-[.72] sm:h-14 sm:w-24"
-              decoding="async"
-              draggable={false}
+            <CharacterAvatar
+              avatarId={player.avatarId}
+              isAlive={false}
+              size={48}
             />
             <span className="text-sm font-black text-red-50 sm:text-base">{player.name}</span>
           </div>
@@ -587,7 +563,7 @@ export default function HostDisplayPage() {
       room?.currentRound,
       room?.gameState,
       morningEvents.map((event) => `${event.event}:${event.targetId ?? ''}`).join(','),
-      room?.nightResults?.deadPlayerIds.join(','),
+      (room?.nightResults?.deadPlayerIds ?? []).join(','),
     ].join('|'),
     [morningEvents, room?.currentRound, room?.gameState, room?.nightResults?.deadPlayerIds, room?.roomId],
   );

@@ -836,15 +836,17 @@ function PlayPageInner() {
         <p>{alertMessage}</p>
       </Popup>
 
-      <MorningSequenceModal
-        open={morningResultOpen}
-        events={morningEvents}
-        activeEvents={morningActiveEvents}
-        result={room.nightResults}
-        players={room.players}
-        revealRoles={room.revealDeathRoles !== false}
-        onClose={() => setMorningResultOpen(false)}
-      />
+      {morningResultOpen && (
+        <MorningSequenceModal
+          open={morningResultOpen}
+          events={morningEvents}
+          activeEvents={morningActiveEvents}
+          result={room.nightResults}
+          players={room.players}
+          revealRoles={room.revealDeathRoles !== false}
+          onClose={() => setMorningResultOpen(false)}
+        />
+      )}
 
       <Popup
         open={leaveConfirmOpen}

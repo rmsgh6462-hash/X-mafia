@@ -33,6 +33,18 @@ function sortMorningEvents(events: ActiveMorningEvent[]): ActiveMorningEvent[] {
   );
 }
 
+function deadIdsOf(result: NightResults | null | undefined): string[] {
+  return result?.deadPlayerIds ?? [];
+}
+
+function savedIdsOf(result: NightResults | null | undefined): string[] {
+  return result?.savedPlayerIds ?? [];
+}
+
+function activeEventsOf(result: NightResults | null | undefined): ActiveMorningEvent[] {
+  return result?.activeEvents ?? [];
+}
+
 /** 성별 payload → 플레이어 데이터 → 아바타 ID 순으로 안전하게 보정한다. */
 function resolvePlayerGender(
   player: Player | null | undefined,
@@ -49,13 +61,14 @@ export function getDoctorRescueImage(gender: PlayerGender | null | undefined): s
     : '/illustrations/doctor-rescue-boy.png';
 }
 
-/** 새 결과의 생존·능력 사용 판정이 끝난 순차 연출 큐 */
+/** @deprecated 아침 연출은 CharacterAvatar만 사용. 하위 호환용 export */
 export function getActiveMorningEvents(
   result: NightResults | null | undefined,
 ): ActiveMorningEvent[] {
-  if (!result?.activeEvents?.length) return [];
+  const events = activeEventsOf(result);
+  if (events.length === 0) return [];
   return sortMorningEvents(
-    result.activeEvents.filter((item) => EVENT_ORDER.includes(item.event)),
+    events.filter((item) => EVENT_ORDER.includes(item.event)),
   );
 }
 
@@ -82,13 +95,16 @@ export function getMorningEvents(
   }
 
   // 이전 버전 결과 데이터도 새 연출을 사용할 수 있도록 추론한다.
+  const deadPlayerIds = deadIdsOf(result);
+  const savedPlayerIds = savedIdsOf(result);
+  const doctorSavedId = result.doctorSavedPlayerId ?? null;
   const doctorDefended =
     result.isDoctorDefended ??
-    (result.deadPlayerIds.length === 0 &&
-      Boolean(result.doctorSavedPlayerId) &&
-      result.savedPlayerIds.includes(result.doctorSavedPlayerId as string));
+    (deadPlayerIds.length === 0 &&
+      doctorSavedId != null &&
+      savedPlayerIds.includes(doctorSavedId));
   const legacyEvents: MorningEvent[] = [];
-  if (result.deadPlayerIds.length > 0) legacyEvents.push('MAFIA_KILL');
+  if (deadPlayerIds.length > 0) legacyEvents.push('MAFIA_KILL');
   if (doctorDefended) legacyEvents.push('DOCTOR_DEFEND');
   if (result.reporterNews && result.reporterTargetId) {
     legacyEvents.push('REPORTER_NEWS');
@@ -120,12 +136,13 @@ export function MorningSequenceModal({
   const sequence = useMemo<ActiveMorningEvent[]>(() => {
     if (activeEvents.length > 0) return sortMorningEvents(activeEvents);
     return (events.length > 0 ? events : getMorningEvents(result)).map((event) => {
+      const deadPlayerIds = deadIdsOf(result);
       const targetId =
         event === 'DOCTOR_DEFEND'
           ? result?.doctorSavedPlayerId ?? null
           : event === 'REPORTER_NEWS'
             ? result?.reporterTargetId ?? null
-            : result?.deadPlayerIds[0] ?? null;
+            : deadPlayerIds[0] ?? null;
       const target = targetId ? players[targetId] : null;
       return {
         event,
@@ -133,7 +150,8 @@ export function MorningSequenceModal({
         targetId,
         targetName: target?.name ?? null,
         targetGender: resolvePlayerGender(target),
-        success: event === 'DOCTOR_DEFEND',
+        success:
+          event === 'DOCTOR_DEFEND' ? result?.isDoctorDefended === true : undefined,
       };
     });
   }, [activeEvents, events, players, result]);
@@ -182,6 +200,7 @@ export function MorningSequenceModal({
 
   return (
     <AnimatePresence>
+      {open && (
       <motion.div
           key={`${currentType}-${eventIndex}`}
           className={`fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/80 px-3 py-8 sm:py-12 ${isMafiaKill ? 'morning-screen-shake' : ''}`}
@@ -213,13 +232,24 @@ export function MorningSequenceModal({
                 targetName={
                   currentEvent.targetName ??
                   (currentEvent.targetId ? players[currentEvent.targetId]?.name : null) ??
-                  (result.reporterTargetId ? players[result.reporterTargetId]?.name : null) ??
+                  (result.reporterTargetId
+                    ? players[result.reporterTargetId]?.name
+                    : null) ??
                   '학생'
                 }
                 role={
                   result.reporterTargetRole ??
                   (currentEvent.targetId ? players[currentEvent.targetId]?.role : null) ??
-                  (result.reporterTargetId ? players[result.reporterTargetId]?.role : null)
+                  (result.reporterTargetId
+                    ? players[result.reporterTargetId]?.role
+                    : null)
+                }
+                targetAvatarId={
+                  currentEvent.targetId
+                    ? players[currentEvent.targetId]?.avatarId
+                    : result.reporterTargetId
+                      ? players[result.reporterTargetId]?.avatarId
+                      : null
                 }
                 onClose={closePopup}
                 onNext={nextOrClose}
@@ -255,6 +285,7 @@ export function MorningSequenceModal({
             연출 건너뛰기
           </button>
         </motion.div>
+      )}
     </AnimatePresence>
   );
 }
@@ -316,7 +347,7 @@ function MafiaKillPanel({
   onNext: () => void;
   hasNext: boolean;
 }) {
-  const deadIds = result.deadPlayerIds;
+  const deadIds = deadIdsOf(result);
   const targetId = event.targetId ?? deadIds[0] ?? null;
   const firstDeadId = deadIds[0] ?? null;
   const target = targetId ? players[targetId] : undefined;
@@ -326,27 +357,15 @@ function MafiaKillPanel({
   const deadRole = targetId
     ? result.deadRoles?.[targetId] ?? (revealRoles && wasKilled ? target?.role : null)
     : null;
-  const fallenGender = dead?.gender ?? playerGenderFromAvatarId(dead?.avatarId);
-  const fallenImage = fallenGender === 'girl'
-    ? '/images/eliminated_girl.png'
-    : '/images/eliminated_boy.png';
+  const displayAvatarId = target?.avatarId ?? dead?.avatarId;
 
   return (
     <motion.section
       className="morning-panel-shake relative overflow-hidden rounded-2xl border border-red-300/25 bg-[#0b0a19] text-white shadow-2xl shadow-red-950/60"
     >
-      <motion.div
-        className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-red-600 via-violet-400 to-red-600"
-        animate={{ opacity: [0.35, 1, 0.35] }}
-        transition={{ duration: 0.7, repeat: Infinity }}
-      />
+      <div className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-red-600 via-violet-400 to-red-600 opacity-80" />
       <div className="relative overflow-hidden px-5 pb-6 pt-7">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(127,29,29,0.45),transparent_60%)]" />
-        <motion.div
-          className="absolute right-5 top-5 h-3 w-3 rounded-full bg-red-400 shadow-[0_0_18px_8px_rgba(248,113,113,0.55)]"
-          animate={{ opacity: [0.25, 1, 0.25], scale: [0.75, 1.2, 0.75] }}
-          transition={{ duration: 0.8, repeat: Infinity }}
-        />
         <div className="relative flex items-center justify-center gap-2 text-xs font-black uppercase tracking-[0.2em] text-red-200">
           <Radio className="h-4 w-4 animate-pulse" />
           Night Alert · Mafia Attack
@@ -354,29 +373,12 @@ function MafiaKillPanel({
         </div>
         <div className="relative mx-auto mt-4 w-full max-w-[360px] overflow-hidden rounded-2xl border border-red-300/30 bg-red-950/60 shadow-[0_0_36px_rgba(220,38,38,0.28)]">
           <div className="relative flex h-44 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_50%_45%,rgba(127,29,29,0.85),rgba(11,10,25,0.92)_70%)]">
-            {wasKilled && dead ? (
-              <motion.img
-                src={fallenImage}
-                alt={`${deadName} 쓰러진 캐릭터 일러스트`}
-                className="absolute inset-0 h-full w-full object-cover object-center drop-shadow-[0_8px_14px_rgba(0,0,0,0.8)]"
-                style={{ filter: 'grayscale(0.72) sepia(0.28) brightness(0.72) contrast(1.08)' }}
-                initial={{ opacity: 0, scale: 1.05, y: 10 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                transition={{ duration: 0.8, ease: 'easeOut' }}
-                decoding="async"
-                draggable={false}
-              />
-            ) : (
-              <CharacterAvatar
-                avatarId={target?.avatarId ?? dead?.avatarId}
-                isAlive={!wasKilled}
-                size={108}
-                className="relative z-10"
-              />
-            )}
-            {wasKilled && dead && (
-              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#090714]/75 via-transparent to-red-950/20" />
-            )}
+            <CharacterAvatar
+              avatarId={displayAvatarId}
+              isAlive={!wasKilled}
+              size={108}
+              className="relative z-10"
+            />
             <div className="morning-crosshair-lock pointer-events-none absolute left-1/2 top-1/2 z-20 h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-red-200/90 shadow-[0_0_18px_rgba(248,113,113,0.7)]">
               <span className="absolute left-1/2 top-0 h-5 w-px -translate-x-1/2 bg-red-100" />
               <span className="absolute bottom-0 left-1/2 h-5 w-px -translate-x-1/2 bg-red-100" />
@@ -384,9 +386,9 @@ function MafiaKillPanel({
               <span className="absolute right-0 top-1/2 h-px w-5 -translate-y-1/2 bg-red-100" />
               <Crosshair className="absolute left-1/2 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 text-red-100" />
             </div>
-            <span className="morning-bullet-impact pointer-events-none absolute left-1/2 top-1/2 z-30 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#030308] ring-2 ring-red-200/90 shadow-[0_0_15px_5px_rgba(248,113,113,0.65)]" />
-            <span className="pointer-events-none absolute left-[calc(50%+13px)] top-[calc(50%-12px)] z-30 h-1.5 w-1.5 rounded-full bg-red-200 shadow-[0_0_10px_4px_rgba(248,113,113,0.7)]" />
-            <span className="pointer-events-none absolute left-[calc(50%-17px)] top-[calc(50%+12px)] z-30 h-1 w-1 rounded-full bg-amber-200 shadow-[0_0_8px_3px_rgba(253,230,138,0.7)]" />
+            {wasKilled && (
+              <span className="morning-bullet-impact pointer-events-none absolute left-1/2 top-1/2 z-30 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#030308] ring-2 ring-red-200/90 shadow-[0_0_15px_5px_rgba(248,113,113,0.65)]" />
+            )}
           </div>
           <div className="border-t border-red-300/20 bg-black/35 px-3 py-2 text-center">
             <p className="text-[10px] font-black uppercase tracking-[0.18em] text-red-200/65">
@@ -459,43 +461,11 @@ function DoctorDefendPanel({
   const targetPlayer = event.targetId ? players[event.targetId] : null;
   const targetGender = resolvePlayerGender(targetPlayer, event.targetGender);
   const targetGenderLabel = targetGender === 'girl' ? '여학생' : '남학생';
-  const rescueImage = getDoctorRescueImage(targetGender);
-  const particles = [
-    { x: 8, y: 72, delay: 0 },
-    { x: 17, y: 48, delay: 0.25 },
-    { x: 27, y: 78, delay: 0.5 },
-    { x: 39, y: 58, delay: 0.75 },
-    { x: 55, y: 66, delay: 0.15 },
-    { x: 68, y: 42, delay: 0.4 },
-    { x: 80, y: 72, delay: 0.65 },
-    { x: 91, y: 54, delay: 0.9 },
-  ];
 
   return (
     <motion.section className="overflow-hidden rounded-2xl border border-emerald-300/30 bg-emerald-950/95 text-white shadow-2xl shadow-emerald-950/60">
-      <div className="relative h-56 overflow-hidden">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={rescueImage}
-          alt={`의사가 ${targetGenderLabel} 시민을 마을에서 구조한 아침 장면`}
-          className="absolute inset-0 h-full w-full object-cover object-center"
-          decoding="async"
-          draggable={false}
-          onError={(event) => {
-            // 치료 이미지가 누락된 배포본에서도 기본 남학생 구조 장면으로 안전하게 표시한다.
-            event.currentTarget.onerror = null;
-            event.currentTarget.src = '/illustrations/doctor-rescue-boy.png';
-          }}
-        />
-        <div className="absolute inset-0 bg-gradient-to-b from-slate-950/55 via-transparent to-emerald-950/95" />
-        <motion.div
-          className="absolute left-1/2 top-[72%] -translate-x-1/2 -translate-y-1/2 rounded-full border border-emerald-100/60 bg-emerald-950/45 p-2 text-emerald-100 backdrop-blur-sm"
-          initial={{ scale: 0.8, opacity: 0 }}
-          animate={{ scale: [0.9, 1.04, 1], opacity: [0, 1, 1] }}
-          transition={{ duration: 0.8, ease: 'easeOut' }}
-        >
-          <HeartPulse className="h-7 w-7 drop-shadow-[0_0_12px_rgba(167,243,208,0.85)]" strokeWidth={1.8} />
-        </motion.div>
+      <div className="relative flex h-56 flex-col items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_50%_30%,rgba(16,185,129,0.35),rgba(6,78,59,0.95)_65%)]">
+        <div className="absolute inset-0 bg-gradient-to-b from-slate-950/40 via-transparent to-emerald-950/90" />
         <div className="absolute inset-x-3 top-3 text-center">
           <p
             id="morning-result-title"
@@ -506,24 +476,15 @@ function DoctorDefendPanel({
               : '의사가 학생의 상태를 확인했습니다.'}
           </p>
         </div>
-        {particles.map((particle) => (
-          <motion.span
-            key={particle.x + '-' + particle.y}
-            className="absolute h-1.5 w-1.5 rounded-full bg-cyan-100 shadow-[0_0_10px_3px_rgba(103,232,249,0.9)]"
-            style={{ left: particle.x + '%', top: particle.y + '%' }}
-            animate={{
-              opacity: [0, 1, 0],
-              scale: [0.5, 1.3, 0.65],
-              y: [0, -12, -22],
-            }}
-            transition={{
-              duration: 1.8,
-              delay: particle.delay,
-              repeat: Infinity,
-              ease: 'easeOut',
-            }}
-          />
-        ))}
+        <CharacterAvatar
+          avatarId={targetPlayer?.avatarId}
+          isAlive
+          size={96}
+          className="relative z-10 mt-6 ring-4 ring-emerald-300/50 shadow-[0_0_24px_rgba(52,211,153,0.45)]"
+        />
+        <div className="relative z-10 mt-3 rounded-full border border-emerald-100/50 bg-emerald-950/60 p-2 text-emerald-100">
+          <HeartPulse className="h-7 w-7 drop-shadow-[0_0_12px_rgba(167,243,208,0.85)]" strokeWidth={1.8} />
+        </div>
       </div>
       <div className="px-5 py-4 text-center">
         <p className="flex items-center justify-center gap-1.5 text-sm font-black text-emerald-100">

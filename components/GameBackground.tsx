@@ -28,7 +28,10 @@ const SCENE_IMAGES: Record<SceneKey, { src: string; alt: string }> = {
 };
 
 function resolveSceneKey(gameState: BackgroundPhase): SceneKey {
-  return gameState === 'NIGHT' ? 'VILLAGE_NIGHT' : 'VILLAGE_DAY';
+  // 아침 발표(RESULT) 때 낮 배경 PNG를 새로 디코딩하면 Electron 렌더러가 죽는 경우가 있어
+  // 밤·결과 단계는 같은 밤 배경을 유지하고, 낮 토론으로 넘어갈 때만 전환한다.
+  if (gameState === 'NIGHT' || gameState === 'RESULT') return 'VILLAGE_NIGHT';
+  return 'VILLAGE_DAY';
 }
 
 function getOverlayClass(gameState: BackgroundPhase): string {

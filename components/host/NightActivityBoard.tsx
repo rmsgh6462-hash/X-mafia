@@ -209,15 +209,15 @@ function RoleActivityCard({
                   room.gameState !== 'NIGHT' &&
                   targetId && (
                     <p className="mt-0.5 text-xs font-semibold text-amber-200">
-                      {room.nightResults.doctorSavedPlayerId === targetId
+                      {room.nightResults?.doctorSavedPlayerId === targetId
                         ? `확정 구출${
-                            room.nightResults.doctorSaveWasTie
+                            room.nightResults?.doctorSaveWasTie
                               ? ' · 동률추첨'
                               : ''
                           }`
                         : `확정 아님 (→ ${
                             room.players[
-                              room.nightResults.doctorSavedPlayerId
+                              room.nightResults?.doctorSavedPlayerId ?? ''
                             ]?.name ?? '?'
                           })`}
                     </p>
