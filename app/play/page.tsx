@@ -193,7 +193,13 @@ function PlayPageInner() {
           clearPlaySession();
           setSession(null);
           setRoom(null);
-          showAlert('게임 종료', '선생님이 게임을 종료했습니다.');
+          const winMsg =
+            remote.winnerSide === 'MAFIA'
+              ? '총 라운드가 끝났습니다. 마피아 팀의 최종 승리입니다!'
+              : remote.winnerSide === 'CITIZEN'
+                ? '마피아를 모두 찾아냈습니다. 시민 팀의 승리입니다!'
+                : '선생님이 게임을 종료했습니다.';
+          showAlert('게임 종료', winMsg);
           return;
         }
 
@@ -603,6 +609,11 @@ function PlayPageInner() {
             {isNight ? <Moon className="h-3.5 w-3.5" /> : <Sun className="h-3.5 w-3.5" />}
             {STATE_LABELS[room.gameState]}
           </span>
+          {room.gameState !== 'WAITING' && (
+            <p className="mt-1.5 font-mono text-xs font-black tracking-wider text-amber-300">
+              ROUND {Math.max(room.currentRound, 0)} / {room.maxRounds}
+            </p>
+          )}
           <p className="mt-1.5 text-xs font-bold text-emerald-300/90">
             생존 {aliveCount}/{totalCount}명
           </p>

@@ -276,6 +276,12 @@ export interface GameRoom {
   voteTieResolution: VoteTieResolution;
   /** 탈락자 직업 즉시 공개 (ON=공개, OFF=탈락만 안내) */
   revealDeathRoles: boolean;
+  /** 총 진행 라운드 수 (기본: 마피아 수 × 3) */
+  maxRounds: number;
+  /** 현재 라운드 (밤 시작 시 증가, 0=시작 전) */
+  currentRound: number;
+  /** 게임 종료 시 승자 */
+  winnerSide: WinnerSide | null;
   /** 재투표 대상 playerId 목록 (null이면 일반 투표) */
   voteRevoteCandidates: string[] | null;
   dayVoteResult: DayVoteResult | null;

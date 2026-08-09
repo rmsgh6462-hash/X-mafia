@@ -74,6 +74,7 @@ import {
   saveRoom,
   setVoteTieResolution,
   setRevealDeathRoles,
+  setMaxRounds,
   startAssignedGame,
   startMatchPhase,
   startNightPhase,
@@ -238,7 +239,19 @@ export default function HostPage() {
     if (prevStateRef.current === room.gameState) return;
     prevStateRef.current = room.gameState;
     void playPhaseBgm(room.gameState);
-    speakPhase(room.gameState);
+    if (room.gameState === 'ENDED') {
+      if (room.winnerSide === 'MAFIA') {
+        speak(
+          '총 라운드가 모두 끝났습니다. 마피아 팀의 최종 승리입니다.',
+        );
+      } else if (room.winnerSide === 'CITIZEN') {
+        speak('마피아를 모두 찾아냈습니다. 시민 팀의 승리입니다.');
+      } else {
+        speakPhase(room.gameState);
+      }
+    } else {
+      speakPhase(room.gameState);
+    }
   }, [room?.gameState, room, audioReady]);
 
   useEffect(() => () => stopAllAudio(), []);
@@ -449,6 +462,11 @@ export default function HostPage() {
                 {STATE_LABELS[room.gameState]}
               </span>
             )}
+            {room && room.gameState !== 'WAITING' && (
+              <span className="rounded-md bg-amber-500/90 px-3 py-1 font-mono text-sm font-black tracking-wider text-stone-900">
+                ROUND {Math.max(room.currentRound, 0)} / {room.maxRounds}
+              </span>
+            )}
           </div>
 
           <span className="rounded-full bg-emerald-500/25 px-4 py-2 text-sm font-bold text-emerald-100 ring-1 ring-emerald-300/30 md:text-base">
@@ -565,15 +583,21 @@ export default function HostPage() {
                   <RoleAssignPanel
                     room={room}
                     busy={busy}
-                    onRandomAssign={(counts, startNow) => {
+                    onRandomAssign={(counts, startNow, rounds) => {
                       if (startNow) {
                         void runAction(
-                          (r) => assignRolesByCountsAndStart(r, counts),
+                          (r) =>
+                            assignRolesByCountsAndStart(
+                              setMaxRounds(r, rounds),
+                              counts,
+                            ),
                           4,
                         );
                         speak('직업을 배정하고 게임을 시작합니다.');
                       } else {
-                        void runAction((r) => assignRolesByCounts(r, counts));
+                        void runAction((r) =>
+                          assignRolesByCounts(setMaxRounds(r, rounds), counts),
+                        );
                         speak('직업을 랜덤 배정했습니다.');
                       }
                     }}
@@ -581,9 +605,15 @@ export default function HostPage() {
                       void runAction((r) => assignRolesManual(r, assignments));
                       speak('수동 직업 배정을 저장했습니다.');
                     }}
-                    onStart={() => {
-                      void runAction(startAssignedGame, 4);
+                    onStart={(rounds) => {
+                      void runAction(
+                        (r) => startAssignedGame(setMaxRounds(r, rounds)),
+                        4,
+                      );
                       speak('게임을 시작합니다.');
+                    }}
+                    onMaxRoundsChange={(n) => {
+                      void runAction((r) => setMaxRounds(r, n));
                     }}
                   />
                 </div>
@@ -721,6 +751,34 @@ export default function HostPage() {
                 onConfirmRevive={() => void runAction(resolveReviveVote)}
                 onDismiss={() => void runAction(dismissMorningResult)}
               />
+            ) : room.gameState === 'ENDED' ? (
+              <StagePanel key="ended" title="게임 종료">
+                <p className="text-4xl font-black md:text-5xl">
+                  {room.winnerSide === 'MAFIA'
+                    ? '마피아 팀 승리'
+                    : room.winnerSide === 'CITIZEN'
+                      ? '시민 팀 승리'
+                      : '게임 종료'}
+                </p>
+                <p className="mt-3 text-lg text-white/75">
+                  {room.winnerSide === 'MAFIA'
+                    ? `총 ${room.maxRounds}라운드 동안 마피아를 모두 찾아내지 못했습니다.`
+                    : room.winnerSide === 'CITIZEN'
+                      ? '생존한 마피아가 없습니다.'
+                      : '선생님이 게임을 종료했습니다.'}
+                </p>
+                <p className="mt-2 font-mono text-sm text-amber-200">
+                  ROUND {room.currentRound} / {room.maxRounds}
+                </p>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void handleEndGame()}
+                  className="mt-8 rounded-xl bg-amber-400 px-6 py-3 text-sm font-black text-stone-900"
+                >
+                  방 닫기
+                </button>
+              </StagePanel>
             ) : (
               <StagePanel key="day" title={STATE_LABELS[room.gameState]}>
                 {room.dayVoteResult ? (
@@ -994,8 +1052,13 @@ export default function HostPage() {
                 onCancel={() => setNightConfigOpen(false)}
                 onStart={(config: NightQuizConfig) => {
                   setNightConfigOpen(false);
-                  void runAction((r) => startNightPhase(r, config), 2);
-                  speak('밤이 되었습니다. 퀴즈를 풀어 주세요.');
+                  void runAction((r) => {
+                    const next = startNightPhase(r, config);
+                    if (next.gameState !== 'ENDED') {
+                      speak('밤이 되었습니다. 퀴즈를 풀어 주세요.');
+                    }
+                    return next;
+                  }, 2);
                 }}
               />
             </div>

@@ -10,10 +10,12 @@ import {
   suggestedRoleCounts,
   type RoleCountConfig,
 } from '@/lib/game/roles';
-import { playerList } from '@/lib/game/room';
+import { playerList, defaultMaxRoundsFromMafiaCount } from '@/lib/game/room';
 import type { GameRoom, Role } from '@/types/game';
 
 type Mode = 'random' | 'manual';
+
+const ROUND_PRESETS = [3, 6, 9, 12, 15, 18];
 
 export function RoleAssignPanel({
   room,
@@ -21,12 +23,18 @@ export function RoleAssignPanel({
   onRandomAssign,
   onManualAssign,
   onStart,
+  onMaxRoundsChange,
 }: {
   room: GameRoom;
   busy?: boolean;
-  onRandomAssign: (counts: RoleCountConfig, startNow: boolean) => void;
+  onRandomAssign: (
+    counts: RoleCountConfig,
+    startNow: boolean,
+    maxRounds: number,
+  ) => void;
   onManualAssign: (assignments: Record<string, Role | null>) => void;
-  onStart: () => void;
+  onStart: (maxRounds: number) => void;
+  onMaxRoundsChange?: (maxRounds: number) => void;
 }) {
   const players = useMemo(() => playerList(room), [room]);
   const n = players.length;
@@ -35,10 +43,22 @@ export function RoleAssignPanel({
     suggestedRoleCounts(Math.max(n, 4)),
   );
   const [manual, setManual] = useState<Record<string, Role | null>>({});
+  const [roundsDirty, setRoundsDirty] = useState(false);
+  const [maxRounds, setMaxRoundsLocal] = useState(
+    () => room.maxRounds || defaultMaxRoundsFromMafiaCount(counts.MAFIA),
+  );
 
   useEffect(() => {
     setCounts(suggestedRoleCounts(Math.max(n, 4)));
   }, [n]);
+
+  useEffect(() => {
+    if (roundsDirty) return;
+    const next = defaultMaxRoundsFromMafiaCount(counts.MAFIA);
+    setMaxRoundsLocal(next);
+    onMaxRoundsChange?.(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [counts.MAFIA, roundsDirty]);
 
   useEffect(() => {
     setManual((prev) => {
@@ -63,6 +83,15 @@ export function RoleAssignPanel({
     }));
   };
 
+  const applyMaxRounds = (value: number) => {
+    const clamped = Math.max(1, Math.min(30, Math.floor(value) || 1));
+    setRoundsDirty(true);
+    setMaxRoundsLocal(clamped);
+    onMaxRoundsChange?.(clamped);
+  };
+
+  const suggested = defaultMaxRoundsFromMafiaCount(counts.MAFIA);
+
   return (
     <section className="w-full max-w-4xl rounded-2xl border border-amber-500/25 bg-stone-950/80 p-5 text-left shadow-xl backdrop-blur-md">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -80,6 +109,57 @@ export function RoleAssignPanel({
             icon={<UserCog className="h-3.5 w-3.5" />}
             label="직접 배정"
           />
+        </div>
+      </div>
+
+      <div className="mb-5 rounded-xl bg-black/35 p-4 ring-1 ring-amber-400/20">
+        <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <p className="text-xs font-bold text-white/50">총 진행 라운드 수</p>
+            <p className="text-sm text-white/70">
+              기본값 = 마피아 수 × 3
+              <span className="ml-2 font-mono text-amber-200">
+                (현재 제안 {suggested})
+              </span>
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setRoundsDirty(false);
+              setMaxRoundsLocal(suggested);
+              onMaxRoundsChange?.(suggested);
+            }}
+            className="rounded-lg bg-white/10 px-2.5 py-1 text-[11px] font-bold text-white/80 hover:bg-white/20"
+          >
+            기본값으로
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={ROUND_PRESETS.includes(maxRounds) ? maxRounds : 'custom'}
+            onChange={(e) => {
+              if (e.target.value === 'custom') return;
+              applyMaxRounds(Number(e.target.value));
+            }}
+            className="rounded-lg border border-white/15 bg-stone-900 px-3 py-2 text-sm font-bold"
+          >
+            {ROUND_PRESETS.map((r) => (
+              <option key={r} value={r}>
+                {r}라운드
+              </option>
+            ))}
+            <option value="custom">직접 입력</option>
+          </select>
+          <input
+            type="number"
+            min={1}
+            max={30}
+            value={maxRounds}
+            onChange={(e) => applyMaxRounds(Number(e.target.value))}
+            className="w-24 rounded-lg border border-white/15 bg-stone-900 px-3 py-2 font-mono text-sm font-black"
+          />
+          <span className="text-xs text-white/45">1–30</span>
         </div>
       </div>
 
@@ -145,7 +225,7 @@ export function RoleAssignPanel({
             <button
               type="button"
               disabled={busy || n < 1 || !countsValid}
-              onClick={() => onRandomAssign(counts, false)}
+              onClick={() => onRandomAssign(counts, false, maxRounds)}
               className="rounded-xl bg-white/10 px-4 py-2.5 text-sm font-bold text-white hover:bg-white/20 disabled:opacity-40"
             >
               랜덤 배정만
@@ -153,7 +233,7 @@ export function RoleAssignPanel({
             <button
               type="button"
               disabled={busy || n < 4 || !countsValid}
-              onClick={() => onRandomAssign(counts, true)}
+              onClick={() => onRandomAssign(counts, true, maxRounds)}
               className="rounded-xl bg-amber-400 px-4 py-2.5 text-sm font-black text-stone-900 hover:bg-amber-300 disabled:opacity-40"
             >
               랜덤 배정 후 게임 시작
@@ -207,7 +287,7 @@ export function RoleAssignPanel({
             <button
               type="button"
               disabled={busy || n < 4}
-              onClick={onStart}
+              onClick={() => onStart(maxRounds)}
               className="rounded-xl bg-amber-400 px-4 py-2.5 text-sm font-black text-stone-900 hover:bg-amber-300 disabled:opacity-40"
             >
               게임 시작

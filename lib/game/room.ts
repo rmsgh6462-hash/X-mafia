@@ -24,6 +24,7 @@ import {
   ROLE_LABELS,
   type RoleCountConfig,
 } from '@/lib/game/roles';
+import { evaluateGameEnd } from '@/lib/game/winConditions';
 import type {
   GameRoom,
   GhostChatMessage,
@@ -62,6 +63,9 @@ export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
     voteEndsAt: null,
     voteTieResolution: 'RANDOM',
     revealDeathRoles: true,
+    maxRounds: 3,
+    currentRound: 0,
+    winnerSide: null,
     voteRevoteCandidates: null,
     dayVoteResult: null,
     createdAt: Date.now(),
@@ -121,6 +125,7 @@ export function endGameRoom(room: GameRoom): GameRoom {
   return {
     ...room,
     gameState: 'ENDED',
+    winnerSide: room.winnerSide ?? null,
     matchEndsAt: null,
     voteEndsAt: null,
   };
@@ -192,6 +197,9 @@ export function normalizeGameRoom(room: GameRoom): GameRoom {
     voteEndsAt: room.voteEndsAt ?? null,
     voteTieResolution: room.voteTieResolution ?? 'RANDOM',
     revealDeathRoles: room.revealDeathRoles !== false,
+    maxRounds: Math.max(1, room.maxRounds ?? 3),
+    currentRound: Math.max(0, room.currentRound ?? 0),
+    winnerSide: room.winnerSide ?? null,
     voteRevoteCandidates: room.voteRevoteCandidates ?? null,
     dayVoteResult: room.dayVoteResult ?? null,
     ghostChat: room.ghostChat ?? {},
@@ -265,6 +273,13 @@ export function startAssignedGame(room: GameRoom): GameRoom {
       hasSelfHealed: false,
     };
   });
+  const mafiaCount = Object.values(nextPlayers).filter(
+    (p) => p.role === 'MAFIA',
+  ).length;
+  const maxRounds =
+    room.maxRounds && room.maxRounds > 0
+      ? room.maxRounds
+      : defaultMaxRoundsFromMafiaCount(Math.max(1, mafiaCount));
   return {
     ...room,
     players: nextPlayers,
@@ -285,6 +300,9 @@ export function startAssignedGame(room: GameRoom): GameRoom {
     gmEvent: null,
     currentCitizenMission: null,
     dayVoteResult: null,
+    currentRound: 0,
+    maxRounds,
+    winnerSide: null,
   };
 }
 
@@ -301,6 +319,13 @@ function startGameWithRoles(room: GameRoom, deck: Role[]): GameRoom {
       hasSelfHealed: false,
     };
   });
+  const mafiaCount = Object.values(nextPlayers).filter(
+    (p) => p.role === 'MAFIA',
+  ).length;
+  const maxRounds =
+    room.maxRounds && room.maxRounds > 0
+      ? room.maxRounds
+      : defaultMaxRoundsFromMafiaCount(mafiaCount);
   return {
     ...room,
     players: nextPlayers,
@@ -321,6 +346,9 @@ function startGameWithRoles(room: GameRoom, deck: Role[]): GameRoom {
     gmEvent: null,
     currentCitizenMission: null,
     dayVoteResult: null,
+    currentRound: 0,
+    maxRounds,
+    winnerSide: null,
   };
 }
 
@@ -627,6 +655,22 @@ export function setRevealDeathRoles(room: GameRoom, enabled: boolean): GameRoom 
   return { ...room, revealDeathRoles: enabled };
 }
 
+export function setMaxRounds(room: GameRoom, maxRounds: number): GameRoom {
+  return {
+    ...room,
+    maxRounds: Math.max(1, Math.min(30, Math.floor(maxRounds) || 1)),
+  };
+}
+
+/** 기본 총 라운드 = 마피아 수 × 3 (최소 3) */
+export function defaultMaxRoundsFromMafiaCount(mafiaCount: number): number {
+  return Math.max(3, Math.max(1, mafiaCount) * 3);
+}
+
+export function countAssignedMafia(room: GameRoom): number {
+  return playerList(room).filter((p) => p.role === 'MAFIA').length;
+}
+
 /** 투표 탈락 공지 문구 */
 export function buildVoteDeathAnnouncement(
   name: string,
@@ -748,7 +792,8 @@ export function resolveDayVote(room: GameRoom): GameRoom {
     next = markMafiaMissionSuccess(next);
   }
 
-  return next;
+  // 투표로 마피아 전멸 → 시민 승 / 마지막 라운드 낮 종료 → 마피아 승
+  return evaluateGameEnd(next, { checkMaxRounds: true });
 }
 
 export function dismissDayVoteResult(room: GameRoom): GameRoom {
@@ -760,6 +805,10 @@ export function startNightPhase(
   room: GameRoom,
   quizConfig?: NightQuizConfig,
 ): GameRoom {
+  // 이미 총 라운드를 모두 치렀으면 다음 밤으로 가지 않고 마피아 승 판정
+  const pre = evaluateGameEnd(room, { checkMaxRounds: true });
+  if (pre.gameState === 'ENDED') return pre;
+
   const cleared: Record<string, Player> = {};
   Object.values(room.players).forEach((p) => {
     cleared[p.id] = { ...p, nightTarget: null };
@@ -792,6 +841,7 @@ export function startNightPhase(
     nightQuizState: createNightQuizState(room, config),
     isMafiaBuffActive: activateBuff,
     pendingMafiaNightBuff: false,
+    currentRound: (room.currentRound ?? 0) + 1,
   };
 }
 

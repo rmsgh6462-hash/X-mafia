@@ -10,6 +10,9 @@ import {
   buildNightDeathAnnouncement,
   finalizeNightQuiz,
 } from '@/lib/game/room';
+import { evaluateGameEnd } from '@/lib/game/winConditions';
+
+export { evaluateGameEnd } from '@/lib/game/winConditions';
 
 function playersOf(room: GameRoom): Player[] {
   return Object.values(room.players ?? {});
@@ -326,7 +329,7 @@ export function resolveNight(
     nextRoom.gmEvent === 'REVIVE_NIGHT' &&
     deadPlayerIds.length > 0;
 
-  return {
+  const resolved: GameRoom = {
     ...nextRoom,
     players: nextPlayers,
     nightResults,
@@ -339,6 +342,9 @@ export function resolveNight(
     gmEvent: openRevive ? 'REVIVE_NIGHT' : null,
     isMafiaBuffActive: false,
   };
+
+  // 밤 사망으로 마피아가 전멸하면 즉시 시민 승리 (라운드 한도는 낮 종료 시 판정)
+  return evaluateGameEnd(resolved);
 }
 
 /** 부활 투표 집계 — 최다 득표 사망자 1명 부활 후 낮으로 */
@@ -369,7 +375,7 @@ export function resolveReviveVote(room: GameRoom): GameRoom {
     (id) => id !== reviveId,
   );
 
-  return {
+  const next: GameRoom = {
     ...room,
     players: nextPlayers,
     nightResults: room.nightResults
@@ -379,15 +385,17 @@ export function resolveReviveVote(room: GameRoom): GameRoom {
     votes: {},
     gameState: 'DAY_TALK',
   };
+  return evaluateGameEnd(next);
 }
 
 /** 아침 발표 종료 → 낮 토론 */
 export function dismissMorningResult(room: GameRoom): GameRoom {
-  return {
+  if (room.gameState === 'ENDED') return room;
+  return evaluateGameEnd({
     ...room,
     gameState: 'DAY_TALK',
     gmEvent: room.gmEvent === 'REVIVE_NIGHT' ? 'REVIVE_NIGHT' : null,
-  };
+  });
 }
 
 export function hasAliveSpiritualist(room: GameRoom): boolean {
