@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "vinext build",
+    "build": "next build",
+    "build:sites": "vinext build",
     "start": "next start",
     "lint": "eslint"
   },
