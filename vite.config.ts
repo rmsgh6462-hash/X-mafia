@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite';
 import vinext from 'vinext';
-import { sites } from './build/sites-vite-plugin';
+import { sites } from './lib/sites-vite-plugin';
 
 export default defineConfig(async () => {
   process.env.WRANGLER_WRITE_LOGS ??= 'false';
@@ -23,4 +23,3 @@ export default defineConfig(async () => {
     ],
   };
 });
-
