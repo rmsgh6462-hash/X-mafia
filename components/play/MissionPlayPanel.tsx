@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { BookOpen, Send, Sparkles } from 'lucide-react';
+import { MathText } from '@/components/math/MathText';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { NightPanel } from '@/components/play/NightPanel';
 import { getNightQuizStats } from '@/lib/game/missions';
@@ -191,7 +192,7 @@ export function NightQuizPlayPanel({
         <div>
           <h3 className="text-sm font-black text-indigo-100">밤 미션 · 퀴즈</h3>
           <p className="mt-2 text-base font-bold leading-snug text-white">
-            {quiz.question}
+            <MathText text={quiz.question} size="lg" />
           </p>
         </div>
         <div
@@ -261,7 +262,7 @@ export function NightQuizPlayPanel({
                 }`}
               >
                 <span className="mr-2 text-white/40">{i + 1}.</span>
-                {c}
+                <MathText text={c} />
               </button>
             ))}
           </div>

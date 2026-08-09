@@ -13,6 +13,7 @@ import {
   Vote,
 } from 'lucide-react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
+import { MathText } from '@/components/math/MathText';
 import { getNightQuizStats, mafiaMissionLabel } from '@/lib/game/missions';
 import { ROLE_ACCENTS, ROLE_LABELS } from '@/lib/game/roles';
 import {
@@ -465,7 +466,9 @@ function MissionSpectatePanel({
           </p>
         ) : (
           <>
-            <p className="text-sm font-bold text-white">{quiz.question}</p>
+            <p className="text-sm font-bold text-white">
+              <MathText text={quiz.question} />
+            </p>
             <p className="mt-1 text-xs text-white/60">
               기준 {quiz.successThresholdPercent}% · 현재{' '}
               <span className="font-black text-amber-300">

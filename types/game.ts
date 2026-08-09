@@ -95,8 +95,8 @@ export interface MissionSubmission {
  */
 export interface NightQuizState {
   active: boolean;
-  /** MATH | KOREAN | CUSTOM */
-  mode: 'MATH' | 'KOREAN' | 'CUSTOM';
+  /** MATH | KOREAN | GENERAL | CUSTOM */
+  mode: 'MATH' | 'KOREAN' | 'GENERAL' | 'CUSTOM';
   /** 수학 모드 학년 1~6 */
   grade: number | null;
   question: string;
@@ -302,7 +302,7 @@ export interface GameRoom {
 
 /** 밤 시작 시 퀴즈 설정 */
 export interface NightQuizConfig {
-  mode: 'MATH' | 'KOREAN' | 'CUSTOM';
+  mode: 'MATH' | 'KOREAN' | 'GENERAL' | 'CUSTOM';
   grade?: number | null;
   question: string;
   answer: string;

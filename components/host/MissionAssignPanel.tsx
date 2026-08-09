@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Check, Crosshair, RefreshCw, Target, X } from 'lucide-react';
+import { MathText } from '@/components/math/MathText';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import {
   QUIZ_MODE_LABELS,
@@ -108,7 +109,7 @@ export function NightQuizConfigForm({
       <div>
         <p className="mb-2 text-xs font-bold text-white/50">퀴즈 출제 모드</p>
         <div className="grid gap-2">
-          {(['MATH', 'KOREAN', 'CUSTOM'] as QuizMode[]).map((m) => (
+          {(['MATH', 'KOREAN', 'GENERAL', 'CUSTOM'] as QuizMode[]).map((m) => (
             <label
               key={m}
               className={`flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2.5 text-sm ring-1 ${
@@ -187,6 +188,11 @@ export function NightQuizConfigForm({
               </span>
             </div>
           ))}
+          <p className="text-[11px] leading-relaxed text-white/45">
+            분수는 <span className="font-mono text-white/70">1/5</span>, 대분수는{' '}
+            <span className="font-mono text-white/70">2 1/3</span>처럼 입력하면
+            미리보기에 세로 분수로 표시됩니다.
+          </p>
         </div>
       )}
 
@@ -207,7 +213,9 @@ export function NightQuizConfigForm({
               </button>
             )}
           </div>
-          <p className="text-base font-bold text-white">{preview.question}</p>
+          <p className="text-base font-bold text-white">
+            <MathText text={preview.question} size="lg" />
+          </p>
           <ul className="mt-3 space-y-1.5">
             {preview.choices.map((choice, i) => (
               <li
@@ -218,7 +226,7 @@ export function NightQuizConfigForm({
                     : 'bg-black/25 text-white/75'
                 }`}
               >
-                {i + 1}. {choice}
+                {i + 1}. <MathText text={choice} />
                 {i === preview.correctIndex ? ' · 정답' : ''}
               </li>
             ))}
@@ -480,7 +488,9 @@ export function NightQuizMonitor({
               ? `수학 ${quiz.grade ?? '?'}학년`
               : quiz.mode === 'KOREAN'
                 ? '국어·맞춤법'
-                : '직접 출제'}
+                : quiz.mode === 'GENERAL'
+                  ? '초등 상식'
+                  : '직접 출제'}
           </span>
           <span className="font-black tabular-nums text-amber-300">
             {done ? '종료' : `${remainSec}초`}
@@ -494,7 +504,9 @@ export function NightQuizMonitor({
             style={{ width: `${progress * 100}%` }}
           />
         </div>
-        <p className="text-lg font-black text-white">{quiz.question}</p>
+        <p className="text-lg font-black text-white">
+          <MathText text={quiz.question} size="lg" />
+        </p>
         <ul className="mt-3 grid gap-1.5 sm:grid-cols-2">
           {quiz.choices.map((c, i) => (
             <li
@@ -505,7 +517,7 @@ export function NightQuizMonitor({
                   : 'bg-black/30 text-white/80'
               }`}
             >
-              {i + 1}. {c}
+              {i + 1}. <MathText text={c} />
             </li>
           ))}
         </ul>
