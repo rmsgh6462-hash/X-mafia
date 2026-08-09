@@ -71,8 +71,8 @@ export function NightPanel({
     switch (role) {
       case 'MAFIA':
         return room.isMafiaBuffActive
-          ? '타겟 지목 (멀티킬 보상 — 각자 독립 지목)'
-          : '타겟 지목';
+          ? '타겟 지목 (미션 보상 — 각자 1명, 마피아끼리도 가능)'
+          : '타겟 지목 (다른 마피아도 지목 가능)';
       case 'DOCTOR':
         return '살릴 플레이어 선택';
       case 'POLICE':

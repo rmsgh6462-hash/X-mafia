@@ -4,6 +4,9 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { LogIn, Moon, Sun, Vote } from 'lucide-react';
+import GameBackground, {
+  type BackgroundPhase,
+} from '@/components/GameBackground';
 import { AvatarPickerGrid } from '@/components/play/AvatarPicker';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { GhostMode } from '@/components/play/GhostMode';
@@ -12,7 +15,7 @@ import { NightPanel } from '@/components/play/NightPanel';
 import { PlayerRoster } from '@/components/play/PlayerRoster';
 import { Popup } from '@/components/play/Popup';
 import { RoleCard } from '@/components/play/RoleCard';
-import { takenAvatarIds, type AvatarId } from '@/lib/game/avatars';
+import { takenAvatarIds, isAvatarId, type AvatarId } from '@/lib/game/avatars';
 import { isFirebaseConfigured } from '@/lib/firebase';
 import {
   alivePlayers,
@@ -25,7 +28,7 @@ import {
   subscribeRoom,
   type PlaySession,
 } from '@/lib/game/room';
-import type { GameRoom, GameState, Player } from '@/types/game';
+import type { GameRoom, GameState, Player, Theme } from '@/types/game';
 
 const STATE_LABELS: Record<GameState, string> = {
   WAITING: '대기 중',
@@ -35,33 +38,54 @@ const STATE_LABELS: Record<GameState, string> = {
   DAY_VOTE: '낮 · 투표',
   NIGHT: '밤',
   RESULT: '결과',
+  ENDED: '종료',
 };
 
-/** PC에서도 모바일 비율로 보이는 중앙 카드 셸 */
+function toBackgroundPhase(state: GameState | null | undefined): BackgroundPhase {
+  if (!state || state === 'WAITING') return 'WAITING';
+  if (state === 'NIGHT') return 'NIGHT';
+  if (state === 'RESULT') return 'RESULT';
+  return 'DAY';
+}
+
+/** PC에서도 모바일 비율로 보이는 중앙 카드 셸 + 테마/밤낮 배경 */
 function PlayShell({
   children,
-  tone = 'day',
+  theme = 'VILLAGE',
+  phase = 'WAITING',
+  playerCount = 0,
+  panel = 'day',
 }: {
   children: React.ReactNode;
-  tone?: 'join' | 'day' | 'night' | 'ghost';
+  theme?: Theme;
+  phase?: BackgroundPhase;
+  playerCount?: number;
+  panel?: 'join' | 'day' | 'night' | 'ghost';
 }) {
-  const tones = {
-    join: 'from-stone-900 via-stone-950 to-black',
-    day: 'from-amber-950/90 via-stone-950 to-black',
-    night: 'from-indigo-950 via-stone-950 to-black',
-    ghost: 'from-violet-950 via-stone-950 to-black',
+  const panels = {
+    join: 'bg-stone-950/72',
+    day: 'bg-stone-950/68',
+    night: 'bg-indigo-950/75',
+    ghost: 'bg-violet-950/78',
   };
 
   return (
-    <div className="flex min-h-dvh items-stretch justify-center bg-stone-950 px-3 py-4 sm:items-center sm:px-6 sm:py-8">
-      <div
-        className={`flex w-full max-w-md flex-col overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-b ${tones[tone]} text-white shadow-2xl shadow-black/50 sm:min-h-[720px] sm:max-h-[900px]`}
-      >
-        <div className="flex flex-1 flex-col overflow-y-auto px-5 py-6 sm:px-6 sm:py-7">
-          {children}
+    <GameBackground
+      theme={theme}
+      gameState={phase}
+      playerCount={phase === 'WAITING' ? Math.min(playerCount, 10) : 0}
+      className="min-h-dvh"
+    >
+      <div className="flex min-h-dvh items-stretch justify-center px-3 py-4 sm:items-center sm:px-6 sm:py-8">
+        <div
+          className={`flex w-full max-w-md flex-col overflow-hidden rounded-3xl border border-white/15 ${panels[panel]} text-white shadow-2xl shadow-black/50 backdrop-blur-xl sm:min-h-[720px] sm:max-h-[900px]`}
+        >
+          <div className="flex flex-1 flex-col overflow-y-auto px-5 py-6 sm:px-6 sm:py-7">
+            {children}
+          </div>
         </div>
       </div>
-    </div>
+    </GameBackground>
   );
 }
 
@@ -133,13 +157,20 @@ function PlayPageInner() {
       unsub = subscribeRoom(session.pin || session.roomId, (remote) => {
         if (cancelled) return;
         if (!remote) {
-          // 방 삭제/미존재 — 직후 입장 레이스면 무시, 그 외 알림
           if (!joinGuardRef.current) {
-            showAlert('입장 실패', '존재하지 않는 방 코드입니다');
             clearPlaySession();
             setSession(null);
             setRoom(null);
+            showAlert('게임 종료', '선생님이 게임을 종료했거나 방이 닫혔습니다.');
           }
+          return;
+        }
+
+        if (remote.gameState === 'ENDED') {
+          clearPlaySession();
+          setSession(null);
+          setRoom(null);
+          showAlert('게임 종료', '선생님이 게임을 종료했습니다.');
           return;
         }
 
@@ -180,10 +211,28 @@ function PlayPageInner() {
     };
   }, [room, session, name, avatarId]);
 
-  const lobbyTaken = useMemo(
-    () => takenAvatarIds(lobbyRoom?.players),
-    [lobbyRoom?.players],
-  );
+  const lobbyTaken = useMemo(() => {
+    const trimmed = name.trim();
+    const mine =
+      (lobbyRoom &&
+        trimmed &&
+        Object.values(lobbyRoom.players ?? {}).find((p) => p.name === trimmed)) ||
+      null;
+    return takenAvatarIds(lobbyRoom?.players, mine?.id);
+  }, [lobbyRoom?.players, name]);
+
+  // 재접속: 같은 닉네임이면 기존 캐릭터 자동 선택
+  useEffect(() => {
+    if (session || !lobbyRoom) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const mine = Object.values(lobbyRoom.players ?? {}).find(
+      (p) => p.name === trimmed,
+    );
+    if (mine?.avatarId && isAvatarId(mine.avatarId)) {
+      setAvatarId(mine.avatarId as AvatarId);
+    }
+  }, [name, lobbyRoom, session]);
 
   useEffect(() => {
     if (!room || !me?.isAlive) return;
@@ -260,13 +309,20 @@ function PlayPageInner() {
   // 미입장: 로그인 폼
   if (!session) {
     return (
-      <PlayShell tone="join">
+      <PlayShell
+        theme={lobbyRoom?.theme ?? 'VILLAGE'}
+        phase="WAITING"
+        playerCount={lobbyRoom ? playerList(lobbyRoom).length : 0}
+        panel="join"
+      >
         <p className="text-xs font-bold uppercase tracking-[0.25em] text-amber-400/90">
           X-Mafia
         </p>
         <h1 className="mt-2 text-3xl font-black tracking-tight">학생 입장</h1>
         <p className="mt-2 text-sm text-white/60">
-          선생님 화면의 PIN 또는 QR로 접속하세요.
+          선생님 화면의 PIN 또는 QR로 접속하세요. 튕겼다면{' '}
+          <span className="font-semibold text-amber-200/90">같은 닉네임</span>으로
+          다시 들어오면 직업이 유지됩니다.
         </p>
 
         <form onSubmit={(e) => void handleJoin(e)} className="mt-8 space-y-5">
@@ -375,7 +431,7 @@ function PlayPageInner() {
   // 세션은 있으나 룸 동기화 전 — 대기 UI
   if (!room || !me) {
     return (
-      <PlayShell tone="join">
+      <PlayShell theme="VILLAGE" phase="WAITING" panel="join">
         <p className="text-xs font-bold uppercase tracking-[0.25em] text-amber-400/90">
           X-Mafia
         </p>
@@ -400,12 +456,18 @@ function PlayPageInner() {
   const isVote = room.gameState === 'DAY_VOTE';
   const isMission = room.gameState === 'DAY_MISSION';
   const isGhost = !me.isAlive;
-  const shellTone = isGhost ? 'ghost' : isNight ? 'night' : 'day';
+  const shellPanel = isGhost ? 'ghost' : isNight ? 'night' : 'day';
   const aliveCount = alivePlayers(room).length;
   const totalCount = playerList(room).length;
+  const bgPhase = toBackgroundPhase(room.gameState);
 
   return (
-    <PlayShell tone={shellTone}>
+    <PlayShell
+      theme={room.theme}
+      phase={bgPhase}
+      playerCount={totalCount}
+      panel={shellPanel}
+    >
       <header className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <CharacterAvatar
@@ -537,7 +599,8 @@ function PlayPageInner() {
                 토론 시간입니다. 직업을 들키지 않도록 주의하세요.
                 {me.role === 'MAFIA' && room.isMafiaBuffActive && (
                   <span className="mt-3 block font-semibold text-red-300">
-                    멀티킬 보상 활성 — 밤에는 각자 독립 지목합니다.
+                    미션 보상 활성 — 밤에는 생존 마피아 각자 1명을 공격합니다.
+                    다른 마피아를 지목할 수도 있습니다.
                   </span>
                 )}
               </section>

@@ -18,7 +18,8 @@ export type GameState =
   | 'DAY_MISSION'
   | 'DAY_VOTE'
   | 'NIGHT'
-  | 'RESULT';
+  | 'RESULT'
+  | 'ENDED';
 
 /** 게임마스터가 발동하는 특수 이벤트 */
 export type GmEvent = 'HINT_BOOST' | 'SILENCE_NIGHT' | 'REVIVE_NIGHT' | null;
@@ -67,8 +68,18 @@ export interface CitizenMission {
 export interface MafiaMission {
   /** 미션 설명 */
   description: string;
-  /** 달성 여부 */
-  isCompleted: boolean;
+  /** 교사 판정 — PENDING이면 아직 미판정 */
+  outcome: MissionOutcome;
+}
+
+/** 낮 투표 결과 (최다 득표자 아웃) */
+export interface DayVoteResult {
+  eliminatedPlayerId: string | null;
+  eliminatedName: string | null;
+  /** 최다 득표가 동점이었는지 */
+  wasTie: boolean;
+  tallies: Record<string, number>;
+  resolvedAt: number;
 }
 
 /** 밤 결과 요약 */
@@ -125,8 +136,10 @@ export interface GameRoom {
   matchEndsAt: number | null;
   /** 낮 투표 종료 시각 (epoch ms) */
   voteEndsAt: number | null;
-  /** 미션 승인 상태 */
+  /** 시민 미션 승인 상태 */
   missionOutcome: MissionOutcome;
+  /** 직전 낮 투표 결과 (발표용) */
+  dayVoteResult: DayVoteResult | null;
   createdAt: number;
   /** 유령 전용 채팅 */
   ghostChat: Record<string, GhostChatMessage>;

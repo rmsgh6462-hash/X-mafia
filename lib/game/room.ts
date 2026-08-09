@@ -3,6 +3,7 @@ import {
   onValue,
   push,
   ref,
+  remove,
   set,
   update,
   type Unsubscribe,
@@ -56,6 +57,7 @@ export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
     matchEndsAt: null,
     voteEndsAt: null,
     missionOutcome: null,
+    dayVoteResult: null,
     createdAt: Date.now(),
     ghostChat: {},
     matchChats: {},
@@ -78,6 +80,22 @@ export async function saveRoom(room: GameRoom): Promise<void> {
       ? err
       : new Error('방 저장에 실패했습니다.');
   }
+}
+
+/** 교사: 게임 종료 — 학생 기기에서 퇴장 처리 */
+export function endGameRoom(room: GameRoom): GameRoom {
+  return {
+    ...room,
+    gameState: 'ENDED',
+    matchEndsAt: null,
+    voteEndsAt: null,
+  };
+}
+
+/** 종료된 방 삭제 (교사 새 방 만들기 전) */
+export async function deleteRoom(roomId: string): Promise<void> {
+  const db = getFirebaseDatabase();
+  await remove(ref(db, `rooms/${roomId}`));
 }
 
 export async function patchRoom(
@@ -174,6 +192,7 @@ export function startAssignedGame(room: GameRoom): GameRoom {
     isMafiaBuffActive: false,
     gmEvent: null,
     currentCitizenMission: null,
+    dayVoteResult: null,
   };
 }
 
@@ -203,6 +222,7 @@ function startGameWithRoles(room: GameRoom, deck: Role[]): GameRoom {
     isMafiaBuffActive: false,
     gmEvent: null,
     currentCitizenMission: null,
+    dayVoteResult: null,
   };
 }
 
@@ -270,29 +290,62 @@ export function startMissionPhase(room: GameRoom): GameRoom {
     voteEndsAt: null,
     missionOutcome: 'PENDING',
     currentCitizenMission: mission,
-    mafiaMission: { description: mafiaDesc, isCompleted: false },
+    mafiaMission: { description: mafiaDesc, outcome: 'PENDING' },
+    // 이번 미션 라운드부터 다시 판정 (이전 버프 초기화)
+    isMafiaBuffActive: false,
   };
 }
 
+function isMissionSideDone(outcome: MissionOutcome): boolean {
+  return outcome === 'SUCCESS' || outcome === 'FAIL';
+}
+
+function finishMissionIfReady(room: GameRoom): GameRoom {
+  const citizenDone = isMissionSideDone(room.missionOutcome);
+  const mafiaDone = isMissionSideDone(room.mafiaMission?.outcome ?? null);
+  if (!citizenDone || !mafiaDone) return room;
+  return {
+    ...room,
+    gameState: 'DAY_TALK',
+  };
+}
+
+/** 시민 미션 성공/실패 — 성공 시 마피아 힌트 공개 */
+export function resolveCitizenMission(
+  room: GameRoom,
+  outcome: Exclude<MissionOutcome, 'PENDING' | null>,
+): GameRoom {
+  const next: GameRoom = {
+    ...room,
+    missionOutcome: outcome,
+    currentHint:
+      outcome === 'SUCCESS' ? generateMafiaHint(room) : room.currentHint,
+  };
+  return finishMissionIfReady(next);
+}
+
+/** 마피아 미션 성공/실패 — 성공 시 밤 멀티킬 버프 (각자 1명, 서로 살해 가능) */
+export function resolveMafiaMission(
+  room: GameRoom,
+  outcome: Exclude<MissionOutcome, 'PENDING' | null>,
+): GameRoom {
+  if (!room.mafiaMission) {
+    return room;
+  }
+  const next: GameRoom = {
+    ...room,
+    mafiaMission: { ...room.mafiaMission, outcome },
+    isMafiaBuffActive: outcome === 'SUCCESS',
+  };
+  return finishMissionIfReady(next);
+}
+
+/** @deprecated 시민 미션만 판정 — resolveCitizenMission 사용 */
 export function resolveMission(
   room: GameRoom,
   outcome: Exclude<MissionOutcome, 'PENDING' | null>,
 ): GameRoom {
-  if (outcome === 'SUCCESS') {
-    return {
-      ...room,
-      missionOutcome: outcome,
-      currentHint: generateMafiaHint(room),
-      gameState: 'DAY_TALK',
-    };
-  }
-
-  return {
-    ...room,
-    missionOutcome: outcome,
-    isMafiaBuffActive: true,
-    gameState: 'DAY_TALK',
-  };
+  return resolveCitizenMission(room, outcome);
 }
 
 export const VOTE_DURATION_MS = 15_000;
@@ -305,6 +358,7 @@ export function startVotePhase(room: GameRoom): GameRoom {
     votes: {},
     matchEndsAt: null,
     voteEndsAt: Date.now() + VOTE_DURATION_MS,
+    dayVoteResult: null,
   };
 }
 
@@ -321,17 +375,22 @@ export function extendVoteTime(
 }
 
 /**
- * 투표 마감 — 최다 득표자 1명 탈락(동점이면 무효), 낮 토론으로
+ * 투표 마감 — 최다 득표자 아웃.
+ * 동점이면 동점자 중 1명을 무작위로 아웃.
+ * 표가 없으면 아웃 없음.
  */
 export function resolveDayVote(room: GameRoom): GameRoom {
   const tallies = tallyVotes(room);
   const entries = Object.entries(tallies).sort((a, b) => b[1] - a[1]);
 
   let eliminatedId: string | null = null;
-  if (entries.length === 1) {
-    eliminatedId = entries[0][0];
-  } else if (entries.length >= 2 && entries[0][1] > entries[1][1]) {
-    eliminatedId = entries[0][0];
+  let wasTie = false;
+
+  if (entries.length >= 1 && entries[0][1] > 0) {
+    const topCount = entries[0][1];
+    const tied = entries.filter(([, c]) => c === topCount).map(([id]) => id);
+    wasTie = tied.length > 1;
+    eliminatedId = tied[Math.floor(Math.random() * tied.length)] ?? null;
   }
 
   const nextPlayers: Record<string, Player> = { ...room.players };
@@ -340,6 +399,8 @@ export function resolveDayVote(room: GameRoom): GameRoom {
       ...nextPlayers[eliminatedId],
       isAlive: false,
     };
+  } else {
+    eliminatedId = null;
   }
 
   return {
@@ -349,7 +410,20 @@ export function resolveDayVote(room: GameRoom): GameRoom {
     votes: {},
     voteEndsAt: null,
     matchEndsAt: null,
+    dayVoteResult: {
+      eliminatedPlayerId: eliminatedId,
+      eliminatedName: eliminatedId
+        ? (nextPlayers[eliminatedId]?.name ?? null)
+        : null,
+      wasTie,
+      tallies,
+      resolvedAt: Date.now(),
+    },
   };
+}
+
+export function dismissDayVoteResult(room: GameRoom): GameRoom {
+  return { ...room, dayVoteResult: null };
 }
 
 export function startNightPhase(room: GameRoom): GameRoom {
@@ -359,6 +433,7 @@ export function startNightPhase(room: GameRoom): GameRoom {
   });
 
   // gmEvent(정전/기회의 밤)는 이번 밤 동안 유지
+  // isMafiaBuffActive는 마피아 미션 성공 버프를 밤까지 유지
   return {
     ...room,
     players: cleared,
@@ -367,6 +442,7 @@ export function startNightPhase(room: GameRoom): GameRoom {
     matchEndsAt: null,
     voteEndsAt: null,
     nightResults: null,
+    dayVoteResult: null,
   };
 }
 
@@ -496,7 +572,7 @@ export async function peekRoom(pin: string): Promise<GameRoom | null> {
   }
 }
 
-/** PIN + 이름 + 캐릭터로 방 입장 */
+/** PIN + 이름 + 캐릭터로 방 입장 (재접속 시 기존 직업·생존 상태 유지) */
 export async function joinRoom(
   pin: string,
   name: string,
@@ -532,21 +608,34 @@ export async function joinRoom(
     const room = snap.val() as GameRoom;
     const players = room.players ?? {};
 
-    if (room.gameState && room.gameState !== 'WAITING') {
-      throw new Error('이미 시작한 방에는 입장할 수 없습니다.');
+    if (room.gameState === 'ENDED') {
+      throw new Error('종료된 게임입니다. 선생님이 새 방을 만들 때까지 기다려 주세요.');
     }
 
-    const existing = Object.values(players).find((p) => p.name === trimmedName);
+    const saved = loadPlaySession();
+    const bySavedId =
+      saved &&
+      (saved.roomId === trimmedPin || saved.pin === trimmedPin) &&
+      players[saved.playerId]
+        ? players[saved.playerId]
+        : null;
+    const byName = Object.values(players).find((p) => p.name === trimmedName) ?? null;
+    const existing = bySavedId ?? byName;
+
     if (existing) {
-      // 같은 이름 재입장: 캐릭터가 비었거나 본인 것이면 갱신 가능
+      // 재접속: 역할·생존·밤 선택 등 유지, 이름/캐릭터만 필요 시 갱신
       const taken = takenAvatarIds(players, existing.id);
+      const nextAvatar =
+        !taken.has(avatarId) || existing.avatarId === avatarId
+          ? avatarId
+          : existing.avatarId;
       if (taken.has(avatarId) && existing.avatarId !== avatarId) {
-        throw new Error('이미 다른 학생이 선택한 캐릭터입니다.');
+        // 다른 캐릭터를 골랐지만 점유됨 → 기존 캐릭터 유지
       }
       const updated: Player = {
         ...existing,
-        avatarId,
-        name: trimmedName,
+        avatarId: nextAvatar,
+        name: trimmedName || existing.name,
       };
       await withTimeout(
         set(ref(db, `rooms/${trimmedPin}/players/${existing.id}`), updated),
@@ -557,7 +646,7 @@ export async function joinRoom(
         pin: trimmedPin,
         roomId: trimmedPin,
         playerId: existing.id,
-        name: trimmedName,
+        name: updated.name,
       };
       savePlaySession(session);
       return {
@@ -568,6 +657,13 @@ export async function joinRoom(
         },
         player: updated,
       };
+    }
+
+    // 신규 입장은 대기 중만
+    if (room.gameState && room.gameState !== 'WAITING') {
+      throw new Error(
+        '이미 시작한 방에는 새로 입장할 수 없습니다. 이전에 쓰던 닉네임으로 다시 들어와 주세요.',
+      );
     }
 
     const taken = takenAvatarIds(players);

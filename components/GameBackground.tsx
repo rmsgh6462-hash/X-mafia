@@ -21,20 +21,20 @@ type SceneKey = `${Theme}_${'DAY' | 'NIGHT'}`;
 
 const SCENE_IMAGES: Record<SceneKey, { src: string; alt: string }> = {
   VILLAGE_DAY: {
-    src: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=1920&q=85',
-    alt: '밝은 시골 마을 아침 풍경',
+    src: 'https://images.unsplash.com/photo-1516483638261-f4dbaf036963?auto=format&fit=crop&w=2400&q=90',
+    alt: '햇살 가득한 낮의 마을 풍경',
   },
   VILLAGE_NIGHT: {
-    src: 'https://images.unsplash.com/photo-1419242902214-272b3f66ee7a?auto=format&fit=crop&w=1920&q=85',
-    alt: '붉은 달과 안개가 낀 시골 밤',
+    src: 'https://images.unsplash.com/photo-1493246507139-91e8fad9978e?auto=format&fit=crop&w=2400&q=90',
+    alt: '달빛과 안개가 깔린 밤의 마을',
   },
   SCHOOL_DAY: {
-    src: 'https://images.unsplash.com/photo-1580582932707-520aed937b7b?auto=format&fit=crop&w=1920&q=85',
-    alt: '활기찬 낮의 학교 교실',
+    src: 'https://images.unsplash.com/photo-1580582932707-520aed937b7b?auto=format&fit=crop&w=2400&q=90',
+    alt: '햇살 아래 밝은 학교 건물',
   },
   SCHOOL_NIGHT: {
-    src: 'https://images.unsplash.com/photo-1558618666-fcd25c85f82e?auto=format&fit=crop&w=1920&q=85',
-    alt: '불 꺼진 미스터리한 밤의 학교',
+    src: 'https://images.unsplash.com/photo-1562774053-701939374585?auto=format&fit=crop&w=2400&q=90',
+    alt: '고요하고 어두운 밤의 학교 복도',
   },
 };
 
@@ -227,6 +227,7 @@ export default function GameBackground({
             alt={scene.alt}
             fill
             priority
+            quality={90}
             sizes="100vw"
             className="object-cover"
           />

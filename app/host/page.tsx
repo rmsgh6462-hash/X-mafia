@@ -6,8 +6,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   Moon,
   Play,
+  Power,
   QrCode,
-  ShieldAlert,
   Swords,
   Sunrise,
   Target,
@@ -28,6 +28,10 @@ import { GmPanel } from '@/components/host/GmPanel';
 import { MatchChatMonitor } from '@/components/host/MatchChatMonitor';
 import { NightActivityBoard } from '@/components/host/NightActivityBoard';
 import { RoleAssignPanel } from '@/components/host/RoleAssignPanel';
+import {
+  RoleBoardPanel,
+  RoleBoardToggle,
+} from '@/components/host/RoleBoardPanel';
 import { PlayerRoster } from '@/components/play/PlayerRoster';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { isFirebaseConfigured } from '@/lib/firebase';
@@ -46,12 +50,16 @@ import {
   assignRolesByCountsAndStart,
   assignRolesManual,
   createEmptyRoom,
+  deleteRoom,
+  dismissDayVoteResult,
+  endGameRoom,
   extendVoteTime,
   generatePin,
   patchRoom,
   playerList,
+  resolveCitizenMission,
   resolveDayVote,
-  resolveMission,
+  resolveMafiaMission,
   saveRoom,
   startAssignedGame,
   startMatchPhase,
@@ -78,6 +86,7 @@ const STATE_LABELS: Record<GameState, string> = {
   DAY_VOTE: '낮 — 투표',
   NIGHT: '밤',
   RESULT: '결과',
+  ENDED: '종료',
 };
 
 function formatPin(pin: string) {
@@ -92,6 +101,7 @@ export default function HostPage() {
   const [now, setNow] = useState(() => Date.now());
   const [joinUrl, setJoinUrl] = useState('');
   const [audioReady, setAudioReady] = useState(false);
+  const [roleBoardOpen, setRoleBoardOpen] = useState(false);
   const prevStateRef = useRef<GameState | null>(null);
   const roomIdRef = useRef<string | null>(null);
 
@@ -192,7 +202,12 @@ export default function HostPage() {
     void (async () => {
       const next = resolveDayVote(room);
       await commitRoom(next);
-      speak('투표가 종료되었습니다.');
+      const name = next.dayVoteResult?.eliminatedName;
+      if (name) {
+        speak(`투표가 종료되었습니다. ${name} 님이 탈락했습니다.`);
+      } else {
+        speak('투표가 종료되었습니다. 탈락자는 없습니다.');
+      }
     })();
   }, [room, now, commitRoom]);
 
@@ -297,6 +312,38 @@ export default function HostPage() {
     setBusy(false);
   };
 
+  const handleEndGame = async () => {
+    if (!room) return;
+    const ok = window.confirm(
+      '게임을 종료할까요? 모든 학생 화면이 퇴장되며, 이 방은 닫힙니다.',
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const ended = endGameRoom(room);
+      await commitRoom(ended);
+      speak('게임이 종료되었습니다.');
+      // 학생들이 ENDED를 받을 시간을 준 뒤 방 삭제
+      window.setTimeout(() => {
+        void (async () => {
+          try {
+            await deleteRoom(ended.roomId);
+          } catch (e) {
+            console.warn(e);
+          }
+          setRoom(null);
+          roomIdRef.current = null;
+          prevStateRef.current = null;
+          setBusy(false);
+        })();
+      }, 1200);
+    } catch (e) {
+      console.warn(e);
+      setError('게임 종료에 실패했습니다.');
+      setBusy(false);
+    }
+  };
+
   const qrValue = room
     ? `${joinUrl}/play?pin=${room.pin}`
     : joinUrl;
@@ -337,7 +384,12 @@ export default function HostPage() {
             />
           </div>
 
-          <div className="flex items-center gap-3 text-sm md:text-base">
+          <div className="flex items-center gap-2 text-sm md:text-base">
+            {room && (
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-400/90 px-3 py-1.5 font-mono font-black tracking-wider text-stone-900 backdrop-blur-sm">
+                PIN {formatPin(room.pin)}
+              </span>
+            )}
             <span className="inline-flex items-center gap-1.5 rounded-md bg-black/35 px-3 py-1.5 backdrop-blur-sm">
               <Users className="h-4 w-4" />
               {playerCount}명
@@ -461,18 +513,43 @@ export default function HostPage() {
               </StagePanel>
             ) : room.gameState === 'DAY_MISSION' ? (
               <StagePanel key="mission" title="미션 진행">
-                <p className="max-w-2xl text-2xl font-bold leading-snug md:text-3xl">
-                  {room.currentCitizenMission?.description ?? '미션 준비 중'}
+                <div className="mx-auto grid w-full max-w-3xl gap-4 text-left md:grid-cols-2">
+                  <MissionJudgeCard
+                    title="시민 미션"
+                    accent="citizen"
+                    description={
+                      room.currentCitizenMission?.description ?? '미션 준비 중'
+                    }
+                    meta={`제한 ${room.currentCitizenMission?.timeLimitSec ?? 0}초`}
+                    outcome={room.missionOutcome}
+                    busy={busy}
+                    onSuccess={() =>
+                      void runAction((r) => resolveCitizenMission(r, 'SUCCESS'))
+                    }
+                    onFail={() =>
+                      void runAction((r) => resolveCitizenMission(r, 'FAIL'))
+                    }
+                  />
+                  <MissionJudgeCard
+                    title="마피아 미션"
+                    accent="mafia"
+                    description={
+                      room.mafiaMission?.description ?? '미션 준비 중'
+                    }
+                    meta="성공 시 생존 마피아 각자 1명 공격 (서로 살해 가능)"
+                    outcome={room.mafiaMission?.outcome ?? null}
+                    busy={busy}
+                    onSuccess={() =>
+                      void runAction((r) => resolveMafiaMission(r, 'SUCCESS'))
+                    }
+                    onFail={() =>
+                      void runAction((r) => resolveMafiaMission(r, 'FAIL'))
+                    }
+                  />
+                </div>
+                <p className="mt-5 text-sm text-white/55">
+                  양쪽 판정이 끝나면 자동으로 토론으로 넘어갑니다.
                 </p>
-                <p className="mt-3 text-lg text-amber-200/90">
-                  제한 {room.currentCitizenMission?.timeLimitSec ?? 0}초
-                  {room.isMafiaBuffActive ? ' · 마피아 버프 활성' : ''}
-                </p>
-                {room.mafiaMission && (
-                  <p className="mt-4 rounded-lg bg-red-950/50 px-4 py-2 text-sm text-red-100">
-                    마피아 서브: {room.mafiaMission.description}
-                  </p>
-                )}
               </StagePanel>
             ) : room.gameState === 'DAY_VOTE' ? (
               <StagePanel key="vote" title="실시간 투표 · 15초">
@@ -565,15 +642,30 @@ export default function HostPage() {
               />
             ) : (
               <StagePanel key="day" title={STATE_LABELS[room.gameState]}>
-                <p className="text-xl text-white/85">
-                  생존 {alive.length}명 · 토론을 진행하세요
-                </p>
-                {room.currentHint && (
-                  <p className="mx-auto mt-4 max-w-xl rounded-xl bg-amber-500/15 px-4 py-3 text-sm text-amber-100 ring-1 ring-amber-400/30">
-                    공개 힌트: {room.currentHint}
-                  </p>
+                {room.dayVoteResult ? (
+                  <DayVoteResultBanner
+                    room={room}
+                    busy={busy}
+                    onDismiss={() => void runAction(dismissDayVoteResult)}
+                  />
+                ) : (
+                  <>
+                    <p className="text-xl text-white/85">
+                      생존 {alive.length}명 · 토론을 진행하세요
+                    </p>
+                    {room.isMafiaBuffActive && (
+                      <p className="mt-2 text-sm font-semibold text-red-300">
+                        마피아 미션 성공 — 오늘 밤 멀티킬 버프 활성
+                      </p>
+                    )}
+                    {room.currentHint && (
+                      <p className="mx-auto mt-4 max-w-xl rounded-xl bg-amber-500/15 px-4 py-3 text-sm text-amber-100 ring-1 ring-amber-400/30">
+                        공개 힌트: {room.currentHint}
+                      </p>
+                    )}
+                    <PlayerChips room={room} />
+                  </>
                 )}
-                <PlayerChips room={room} />
               </StagePanel>
             )}
           </AnimatePresence>
@@ -596,123 +688,197 @@ export default function HostPage() {
           )}
         </main>
 
-        {/* 하단 교사 제어바 */}
-        <footer className="fixed inset-x-0 bottom-0 z-30 border-t border-white/10 bg-stone-950/80 px-3 py-3 backdrop-blur-xl md:px-6">
-          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-center gap-2 md:gap-3">
-            <ControlBtn
-              icon={<Play className="h-4 w-4" />}
-              label="게임 시작"
-              disabled={!room || busy || room.gameState !== 'WAITING'}
-              onClick={() => void runAction(assignRolesAndStart, 4)}
-              accent="amber"
-            />
-            <ControlBtn
-              icon={<Users className="h-4 w-4" />}
-              label="1:1 매칭 발동"
-              disabled={!room || busy || room.gameState === 'WAITING'}
-              onClick={() => void runAction(startMatchPhase, 2)}
-            />
-            <ControlBtn
-              icon={<Target className="h-4 w-4" />}
-              label="미션 발동"
-              disabled={!room || busy || room.gameState === 'WAITING'}
-              onClick={() => void runAction(startMissionPhase, 2)}
-            />
-            <ControlBtn
-              icon={<Check className="h-4 w-4" />}
-              label="미션 성공"
-              disabled={!room || busy || room.gameState !== 'DAY_MISSION'}
-              onClick={() =>
-                void runAction((r) => resolveMission(r, 'SUCCESS'))
-              }
-              accent="green"
-            />
-            <ControlBtn
-              icon={<X className="h-4 w-4" />}
-              label="미션 실패"
-              disabled={!room || busy || room.gameState !== 'DAY_MISSION'}
-              onClick={() => void runAction((r) => resolveMission(r, 'FAIL'))}
-              accent="red"
-            />
-            <ControlBtn
-              icon={<Vote className="h-4 w-4" />}
-              label="투표 시작"
-              disabled={!room || busy || room.gameState === 'WAITING'}
-              onClick={() => void runAction(startVotePhase, 2)}
-            />
-            <ControlBtn
-              icon={<Timer className="h-4 w-4" />}
-              label="+15초"
-              disabled={!room || busy || room.gameState !== 'DAY_VOTE'}
-              onClick={() => {
-                void runAction(extendVoteTime);
-                speak('투표 시간을 십오 초 연장합니다.');
-              }}
-              accent="amber"
-            />
-            <ControlBtn
-              icon={<Square className="h-4 w-4" />}
-              label="투표 종료"
-              disabled={!room || busy || room.gameState !== 'DAY_VOTE'}
-              onClick={() => {
-                void runAction(resolveDayVote);
-                speak('투표를 종료합니다.');
-              }}
-              accent="red"
-            />
-            <ControlBtn
-              icon={<Moon className="h-4 w-4" />}
-              label="밤 시작"
-              disabled={!room || busy || room.gameState === 'WAITING'}
-              onClick={() => void runAction(startNightPhase, 2)}
-              accent="night"
-            />
-            <ControlBtn
-              icon={<Sunrise className="h-4 w-4" />}
-              label="아침 발표"
-              disabled={!room || busy || room.gameState !== 'NIGHT'}
-              onClick={() => void handleResolveNight()}
-              accent="amber"
-            />
-            <ControlBtn
-              icon={<HeartHandshake className="h-4 w-4" />}
-              label="부활 확정"
-              disabled={!room || busy || !revivePending}
-              onClick={() => void runAction(resolveReviveVote)}
-              accent="green"
-            />
-            <ControlBtn
-              icon={<Swords className="h-4 w-4" />}
-              label="테스트 +1"
-              disabled={!room || busy}
-              onClick={() => {
-                if (!room) return;
-                const id = `demo_${Date.now()}`;
-                const avatarId = firstFreeAvatarId(room.players);
-                const next: GameRoom = {
-                  ...room,
-                  players: {
-                    ...room.players,
-                    [id]: {
-                      id,
-                      name: `학생${playerCount + 1}`,
-                      role: null,
-                      isAlive: true,
-                      nightTarget: null,
-                      partnerId: null,
-                      avatarId,
-                    },
-                  },
-                };
-                void commitRoom(next);
-              }}
-            />
+        {/* 하단 교사 제어바 — 단계별 관련 버튼만 표시 */}
+        <footer className="fixed inset-x-0 bottom-0 z-30 border-t border-white/10 bg-stone-950/90 px-3 py-3 backdrop-blur-xl md:px-6">
+          <div className="mx-auto flex max-w-6xl flex-col gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-white/35">
+                {room ? STATE_LABELS[room.gameState] : '방 대기'}
+                {room?.isMafiaBuffActive ? ' · 멀티킬 버프' : ''}
+              </p>
+              <div className="flex items-center gap-2">
+                <RoleBoardToggle
+                  open={roleBoardOpen}
+                  disabled={!room}
+                  onToggle={() => setRoleBoardOpen((v) => !v)}
+                />
+                {!audioReady && (
+                  <button
+                    type="button"
+                    onClick={() => void enableAudio()}
+                    className="inline-flex items-center gap-1 rounded-xl bg-white/10 px-3 py-2 text-xs font-bold text-white hover:bg-white/16"
+                  >
+                    <Volume2 className="h-3.5 w-3.5" />
+                    소리
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {!room && (
+                <ControlBtn
+                  icon={<QrCode className="h-4 w-4" />}
+                  label="방 생성"
+                  disabled={busy}
+                  onClick={() => void handleCreateRoom()}
+                  accent="amber"
+                />
+              )}
+
+              {room?.gameState === 'WAITING' && (
+                <>
+                  <ControlBtn
+                    icon={<Play className="h-4 w-4" />}
+                    label="게임 시작"
+                    disabled={busy}
+                    onClick={() => void runAction(assignRolesAndStart, 4)}
+                    accent="amber"
+                  />
+                  <ControlBtn
+                    icon={<Swords className="h-4 w-4" />}
+                    label="테스트 +1"
+                    disabled={busy}
+                    onClick={() => {
+                      if (!room) return;
+                      const id = `demo_${Date.now()}`;
+                      const avatarId = firstFreeAvatarId(room.players);
+                      const next: GameRoom = {
+                        ...room,
+                        players: {
+                          ...room.players,
+                          [id]: {
+                            id,
+                            name: `학생${playerCount + 1}`,
+                            role: null,
+                            isAlive: true,
+                            nightTarget: null,
+                            partnerId: null,
+                            avatarId,
+                          },
+                        },
+                      };
+                      void commitRoom(next);
+                    }}
+                  />
+                </>
+              )}
+
+              {room?.gameState === 'DAY_TALK' && (
+                  <>
+                    <ControlBtn
+                      icon={<Users className="h-4 w-4" />}
+                      label="1:1 매칭"
+                      disabled={busy}
+                      onClick={() => void runAction(startMatchPhase, 2)}
+                    />
+                    <ControlBtn
+                      icon={<Target className="h-4 w-4" />}
+                      label="미션"
+                      disabled={busy}
+                      onClick={() => void runAction(startMissionPhase, 2)}
+                    />
+                    <ControlBtn
+                      icon={<Vote className="h-4 w-4" />}
+                      label="투표"
+                      disabled={busy}
+                      onClick={() => void runAction(startVotePhase, 2)}
+                    />
+                    <ControlBtn
+                      icon={<Moon className="h-4 w-4" />}
+                      label="밤"
+                      disabled={busy}
+                      onClick={() => void runAction(startNightPhase, 2)}
+                      accent="night"
+                    />
+                  </>
+                )}
+
+              {room?.gameState === 'DAY_MATCH' && (
+                <ControlBtn
+                  icon={<Users className="h-4 w-4" />}
+                  label="토론으로"
+                  disabled={busy}
+                  onClick={() =>
+                    void runAction((r) => ({
+                      ...r,
+                      gameState: 'DAY_TALK',
+                      matchEndsAt: null,
+                    }))
+                  }
+                />
+              )}
+
+              {room?.gameState === 'DAY_VOTE' && (
+                <>
+                  <ControlBtn
+                    icon={<Timer className="h-4 w-4" />}
+                    label="+15초"
+                    disabled={busy}
+                    onClick={() => {
+                      void runAction(extendVoteTime);
+                      speak('투표 시간을 십오 초 연장합니다.');
+                    }}
+                    accent="amber"
+                  />
+                  <ControlBtn
+                    icon={<Square className="h-4 w-4" />}
+                    label="투표 종료·아웃"
+                    disabled={busy}
+                    onClick={() => {
+                      void runAction((r) => {
+                        const next = resolveDayVote(r);
+                        const name = next.dayVoteResult?.eliminatedName;
+                        if (name) speak(`${name} 님이 탈락했습니다.`);
+                        else speak('탈락자는 없습니다.');
+                        return next;
+                      });
+                    }}
+                    accent="red"
+                  />
+                </>
+              )}
+
+              {room?.gameState === 'NIGHT' && (
+                <ControlBtn
+                  icon={<Sunrise className="h-4 w-4" />}
+                  label="아침 발표"
+                  disabled={busy}
+                  onClick={() => void handleResolveNight()}
+                  accent="amber"
+                />
+              )}
+
+              {revivePending && (
+                <ControlBtn
+                  icon={<HeartHandshake className="h-4 w-4" />}
+                  label="부활 확정"
+                  disabled={busy}
+                  onClick={() => void runAction(resolveReviveVote)}
+                  accent="green"
+                />
+              )}
+
+              {room && room.gameState !== 'ENDED' && (
+                <ControlBtn
+                  icon={<Power className="h-4 w-4" />}
+                  label="게임 종료"
+                  disabled={busy}
+                  onClick={() => void handleEndGame()}
+                  accent="red"
+                />
+              )}
+            </div>
           </div>
-          <p className="mt-1 text-center text-[11px] text-white/40">
-            <ShieldAlert className="mr-1 inline h-3 w-3" />
-            사망자 직업은 화면에 ??? 로 표시됩니다 · 테스트 +1 로 입장 시뮬레이션
-          </p>
         </footer>
+
+        {room && (
+          <RoleBoardPanel
+            room={room}
+            open={roleBoardOpen}
+            onClose={() => setRoleBoardOpen(false)}
+          />
+        )}
       </div>
     </GameBackground>
   );
@@ -761,6 +927,139 @@ function StagePanel({
       </h2>
       {children}
     </motion.div>
+  );
+}
+
+function MissionJudgeCard({
+  title,
+  description,
+  meta,
+  outcome,
+  accent,
+  busy,
+  onSuccess,
+  onFail,
+}: {
+  title: string;
+  description: string;
+  meta: string;
+  outcome: string | null;
+  accent: 'citizen' | 'mafia';
+  busy: boolean;
+  onSuccess: () => void;
+  onFail: () => void;
+}) {
+  const done = outcome === 'SUCCESS' || outcome === 'FAIL';
+  const ring =
+    accent === 'mafia'
+      ? 'ring-red-400/30 bg-red-950/35'
+      : 'ring-emerald-400/25 bg-emerald-950/30';
+
+  return (
+    <div className={`rounded-2xl p-4 ring-1 ${ring}`}>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h3
+          className={`text-sm font-black ${
+            accent === 'mafia' ? 'text-red-200' : 'text-emerald-200'
+          }`}
+        >
+          {title}
+        </h3>
+        {done && (
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+              outcome === 'SUCCESS'
+                ? 'bg-emerald-500/25 text-emerald-200'
+                : 'bg-red-500/25 text-red-200'
+            }`}
+          >
+            {outcome === 'SUCCESS' ? '성공' : '실패'}
+          </span>
+        )}
+      </div>
+      <p className="text-base font-bold leading-snug text-white md:text-lg">
+        {description}
+      </p>
+      <p className="mt-2 text-xs text-white/50">{meta}</p>
+      {!done && (
+        <div className="mt-4 flex gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onSuccess}
+            className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl bg-emerald-500 px-3 py-2.5 text-sm font-black text-white hover:bg-emerald-400 disabled:opacity-50"
+          >
+            <Check className="h-4 w-4" />
+            성공
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onFail}
+            className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl bg-red-600 px-3 py-2.5 text-sm font-black text-white hover:bg-red-500 disabled:opacity-50"
+          >
+            <X className="h-4 w-4" />
+            실패
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DayVoteResultBanner({
+  room,
+  busy,
+  onDismiss,
+}: {
+  room: GameRoom;
+  busy: boolean;
+  onDismiss: () => void;
+}) {
+  const result = room.dayVoteResult;
+  if (!result) return null;
+  const eliminated = result.eliminatedPlayerId
+    ? room.players[result.eliminatedPlayerId]
+    : null;
+
+  return (
+    <div className="space-y-5">
+      {eliminated ? (
+        <>
+          <p className="text-lg text-white/70">투표 탈락</p>
+          <div className="mx-auto flex max-w-md items-center justify-between rounded-xl bg-red-950/55 px-5 py-4 ring-1 ring-red-400/35">
+            <span className="flex items-center gap-3">
+              <CharacterAvatar
+                avatarId={eliminated.avatarId}
+                isAlive={false}
+                size={52}
+              />
+              <span className="text-2xl font-black text-white">
+                {eliminated.name}
+              </span>
+            </span>
+            <span className="rounded-md bg-black/40 px-3 py-1 font-mono text-sm font-bold tracking-widest text-white/55">
+              ???
+            </span>
+          </div>
+          {result.wasTie && (
+            <p className="text-sm text-amber-200/80">
+              동점 — 최다 득표자 중 무작위로 1명 탈락
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="text-3xl font-black text-emerald-300">투표 탈락자 없음</p>
+      )}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={onDismiss}
+        className="rounded-xl bg-amber-400 px-5 py-2.5 text-sm font-black text-stone-900 hover:bg-amber-300 disabled:opacity-50"
+      >
+        확인 · 토론 계속
+      </button>
+    </div>
   );
 }
 

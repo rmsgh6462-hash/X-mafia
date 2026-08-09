@@ -14,6 +14,7 @@ const PHASE_TONES: Partial<Record<GameState, PhaseTone>> = {
   DAY_VOTE: { freqs: [185, 233], volume: 0.045, type: 'sawtooth' },
   NIGHT: { freqs: [55, 82, 110], volume: 0.055, type: 'sine' },
   RESULT: { freqs: [330, 415, 494], volume: 0.04, type: 'triangle' },
+  ENDED: { freqs: [196, 165], volume: 0.03, type: 'sine' },
 };
 
 const TTS_SCRIPTS: Partial<Record<GameState, string>> = {
@@ -24,6 +25,7 @@ const TTS_SCRIPTS: Partial<Record<GameState, string>> = {
   DAY_VOTE: '투표를 시작합니다. 십오 초 안에 의심되는 사람에게 투표해 주세요.',
   NIGHT: '밤이 되었습니다. 눈을 감고 조용히 기다려 주세요.',
   RESULT: '결과가 발표됩니다.',
+  ENDED: '게임이 종료되었습니다.',
 };
 
 let audioCtx: AudioContext | null = null;
