@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import { publishReporterNews, setNightTarget } from '@/lib/game/room';
+import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import type { GameRoom, Player, Role } from '@/types/game';
 
 function PlayerPickList({
@@ -26,13 +27,18 @@ function PlayerPickList({
             type="button"
             disabled={disabled}
             onClick={() => onSelect(p.id)}
-            className={`min-h-14 rounded-xl px-4 py-4 text-sm font-bold transition hover:brightness-110 ${
+            className={`flex min-h-14 items-center gap-2 rounded-xl px-3 py-3 text-sm font-bold transition hover:brightness-110 ${
               active
                 ? 'bg-amber-400 text-stone-900 ring-2 ring-amber-200'
                 : 'bg-white/10 text-white hover:bg-white/16'
             } disabled:opacity-40`}
           >
-            {p.name}
+            <CharacterAvatar
+              avatarId={p.avatarId}
+              isAlive={p.isAlive}
+              size={36}
+            />
+            <span className="truncate">{p.name}</span>
           </button>
         );
       })}

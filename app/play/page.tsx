@@ -4,21 +4,27 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { LogIn, Moon, Sun, Vote } from 'lucide-react';
+import { AvatarPickerGrid } from '@/components/play/AvatarPicker';
+import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { GhostMode } from '@/components/play/GhostMode';
+import { MatchChatPanel } from '@/components/play/MatchChatPanel';
 import { NightPanel } from '@/components/play/NightPanel';
+import { PlayerRoster } from '@/components/play/PlayerRoster';
 import { Popup } from '@/components/play/Popup';
 import { RoleCard } from '@/components/play/RoleCard';
+import { takenAvatarIds, type AvatarId } from '@/lib/game/avatars';
+import { isFirebaseConfigured } from '@/lib/firebase';
 import {
   alivePlayers,
   castVote,
   clearPlaySession,
   joinRoom,
   loadPlaySession,
+  peekRoom,
   playerList,
   subscribeRoom,
   type PlaySession,
 } from '@/lib/game/room';
-import { isFirebaseConfigured } from '@/lib/firebase';
 import type { GameRoom, GameState, Player } from '@/types/game';
 
 const STATE_LABELS: Record<GameState, string> = {
@@ -67,6 +73,8 @@ function PlayPageInner() {
   const [room, setRoom] = useState<GameRoom | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
+  const [avatarId, setAvatarId] = useState<AvatarId | null>(null);
+  const [lobbyRoom, setLobbyRoom] = useState<GameRoom | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
   const [hintOpen, setHintOpen] = useState(false);
@@ -95,6 +103,26 @@ function PlayPageInner() {
       if (saved.name) setName(saved.name);
     }
   }, [searchParams]);
+
+  // PIN 입력 시 방 미리보기 (닉네임·사용중 캐릭터)
+  useEffect(() => {
+    if (session) return;
+    const trimmed = pin.replace(/\s/g, '');
+    if (trimmed.length < 4 || !isFirebaseConfigured()) {
+      setLobbyRoom(null);
+      return;
+    }
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      void peekRoom(trimmed).then((r) => {
+        if (!cancelled) setLobbyRoom(r);
+      });
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [pin, session]);
 
   useEffect(() => {
     if (!session) return;
@@ -148,9 +176,14 @@ function PlayPageInner() {
       isAlive: true,
       nightTarget: null,
       partnerId: null,
-      avatarIndex: 0,
+      avatarId: avatarId ?? 'M0',
     };
-  }, [room, session, name]);
+  }, [room, session, name, avatarId]);
+
+  const lobbyTaken = useMemo(
+    () => takenAvatarIds(lobbyRoom?.players),
+    [lobbyRoom?.players],
+  );
 
   useEffect(() => {
     if (!room || !me?.isAlive) return;
@@ -194,9 +227,15 @@ function PlayPageInner() {
       return;
     }
 
+    if (!avatarId) {
+      showAlert('입장 실패', '캐릭터를 선택해 주세요.');
+      setJoining(false);
+      return;
+    }
+
     try {
       joinGuardRef.current = true;
-      const result = await joinRoom(pin, name);
+      const result = await joinRoom(pin, name, avatarId);
       setRoom(result.room);
       setSession(result.session);
       setName(result.session.name);
@@ -260,9 +299,14 @@ function PlayPageInner() {
               required
             />
           </label>
+
+          {lobbyRoom && (
+            <PlayerRoster room={lobbyRoom} compact title="이미 입장한 친구" />
+          )}
+
           <label className="block">
             <span className="mb-2 block text-xs font-semibold text-white/50">
-              이름
+              이름 (닉네임)
             </span>
             <input
               ref={nameInputRef}
@@ -275,10 +319,27 @@ function PlayPageInner() {
               className="w-full rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-base text-white outline-none transition focus:border-amber-400/60 focus:ring-2 focus:ring-amber-400/20"
               required
             />
-            <span className="mt-1.5 block text-[11px] text-white/35">
-              Enter 키를 누르면 접속합니다
-            </span>
           </label>
+
+          <div>
+            <span className="mb-2 block text-xs font-semibold text-white/50">
+              내 캐릭터 선택 (중복 불가 · 남 16 / 여 16)
+            </span>
+            <div className="max-h-72 overflow-y-auto rounded-2xl border border-white/10 bg-black/20 p-3">
+              <AvatarPickerGrid
+                selectedId={avatarId}
+                takenIds={lobbyTaken}
+                onSelect={setAvatarId}
+              />
+            </div>
+            {avatarId && (
+              <div className="mt-3 flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2">
+                <CharacterAvatar avatarId={avatarId} size={40} />
+                <span className="text-sm text-white/70">선택됨</span>
+              </div>
+            )}
+          </div>
+
           {error && (
             <p className="rounded-xl bg-red-950/70 px-4 py-3 text-sm text-red-100">
               {error}
@@ -286,7 +347,12 @@ function PlayPageInner() {
           )}
           <button
             type="submit"
-            disabled={joining || pin.length < 4 || name.trim().length < 1}
+            disabled={
+              joining ||
+              pin.length < 4 ||
+              name.trim().length < 1 ||
+              !avatarId
+            }
             className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-amber-400 px-5 py-4 text-base font-black text-stone-900 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <LogIn className="h-5 w-5" />
@@ -335,32 +401,46 @@ function PlayPageInner() {
   const isMission = room.gameState === 'DAY_MISSION';
   const isGhost = !me.isAlive;
   const shellTone = isGhost ? 'ghost' : isNight ? 'night' : 'day';
+  const aliveCount = alivePlayers(room).length;
+  const totalCount = playerList(room).length;
 
   return (
     <PlayShell tone={shellTone}>
       <header className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/45">
-            X-Mafia
-          </p>
-          <p className="text-lg font-black">{me.name}</p>
+        <div className="flex items-center gap-3">
+          <CharacterAvatar
+            avatarId={me.avatarId}
+            isAlive={me.isAlive}
+            size={48}
+          />
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/45">
+              X-Mafia
+            </p>
+            <p className="text-lg font-black">{me.name}</p>
+          </div>
         </div>
         <div className="text-right">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold">
             {isNight ? <Moon className="h-3.5 w-3.5" /> : <Sun className="h-3.5 w-3.5" />}
             {STATE_LABELS[room.gameState]}
           </span>
-          <p className="mt-1.5 font-mono text-xs text-white/40">PIN {room.pin}</p>
+          <p className="mt-1.5 text-xs font-bold text-emerald-300/90">
+            생존 {aliveCount}/{totalCount}명
+          </p>
+          <p className="mt-0.5 font-mono text-[10px] text-white/40">PIN {room.pin}</p>
         </div>
       </header>
 
       <main className="mt-6 flex flex-1 flex-col space-y-5">
+        <PlayerRoster room={room} highlightId={me.id} compact />
+
         {isGhost ? (
           <GhostMode room={room} me={me} pin={session.pin} />
         ) : (
           <>
             <AnimatePresence mode="wait">
-              {me.role ? (
+              {me.role && room.gameState !== 'WAITING' ? (
                 <motion.div
                   key="role"
                   initial={{ opacity: 0, y: 10 }}
@@ -380,27 +460,48 @@ function PlayPageInner() {
                   animate={{ opacity: 1 }}
                   className="rounded-2xl bg-white/5 p-6 text-center ring-1 ring-white/10"
                 >
-                  <p className="text-base font-bold">대기 중</p>
+                  <CharacterAvatar
+                    avatarId={me.avatarId}
+                    isAlive
+                    size={72}
+                    className="mx-auto"
+                  />
+                  <p className="mt-3 text-base font-bold">대기 중</p>
                   <p className="mt-2 text-sm text-white/60">
                     선생님이 게임을 시작하면 비밀 직업이 공개됩니다.
                   </p>
                   <p className="mt-4 text-xs text-white/40">
-                    현재 {playerList(room).length}명 입장
+                    현재 {totalCount}명 입장 · 생존 {aliveCount}명
                   </p>
                 </motion.section>
               )}
             </AnimatePresence>
 
             {room.gameState === 'DAY_MATCH' && (
-              <section className="rounded-2xl bg-amber-500/15 p-5 ring-1 ring-amber-400/30">
-                <h3 className="text-sm font-black text-amber-100">1:1 매칭</h3>
-                <p className="mt-2 text-sm text-white/85">
-                  파트너:{' '}
-                  <span className="font-bold text-white">
-                    {partner?.name ?? '대기 (홀수 인원)'}
-                  </span>
-                </p>
-              </section>
+              <>
+                <section className="rounded-2xl bg-amber-500/15 p-4 ring-1 ring-amber-400/30">
+                  <h3 className="text-sm font-black text-amber-100">1:1 매칭</h3>
+                  <p className="mt-1 text-sm text-white/85">
+                    파트너:{' '}
+                    <span className="font-bold text-white">
+                      {partner?.name ?? '대기 (홀수 인원)'}
+                    </span>
+                  </p>
+                  {!partner && (
+                    <p className="mt-2 text-xs text-white/50">
+                      홀수 인원이라 파트너가 없습니다. 잠시 기다려 주세요.
+                    </p>
+                  )}
+                </section>
+                {partner && (
+                  <MatchChatPanel
+                    room={room}
+                    me={me}
+                    partner={partner}
+                    pin={session.pin}
+                  />
+                )}
+              </>
             )}
 
             {isMission && room.currentCitizenMission && (
@@ -491,10 +592,22 @@ function VotePanel({
   pin: string;
 }) {
   const [busy, setBusy] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const targets = alivePlayers(room).filter((p) => p.id !== me.id);
   const myVote = room.votes?.[me.id] ?? null;
+  const remainSec = room.voteEndsAt
+    ? Math.max(0, Math.ceil((room.voteEndsAt - now) / 1000))
+    : 0;
+  const closed = Boolean(room.voteEndsAt && now >= room.voteEndsAt);
+
+  useEffect(() => {
+    if (!room.voteEndsAt) return;
+    const id = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(id);
+  }, [room.voteEndsAt]);
 
   const vote = async (targetId: string) => {
+    if (closed) return;
     setBusy(true);
     try {
       await castVote(pin, me.id, targetId);
@@ -505,25 +618,41 @@ function VotePanel({
 
   return (
     <section className="rounded-2xl bg-stone-900/70 p-5 ring-1 ring-white/10">
-      <h3 className="flex items-center gap-1.5 text-sm font-black">
-        <Vote className="h-4 w-4 text-amber-300" />
-        투표
-      </h3>
-      <p className="mt-1 text-xs text-white/50">의심되는 사람을 선택하세요</p>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="flex items-center gap-1.5 text-sm font-black">
+          <Vote className="h-4 w-4 text-amber-300" />
+          투표
+        </h3>
+        <span
+          className={`rounded-full px-3 py-1 font-mono text-sm font-black tabular-nums ${
+            remainSec <= 5
+              ? 'bg-red-500/25 text-red-200'
+              : 'bg-amber-400/20 text-amber-200'
+          }`}
+        >
+          {remainSec}초
+        </span>
+      </div>
+      <p className="mt-1 text-xs text-white/50">
+        {closed
+          ? '투표가 마감되었습니다. 결과를 기다려 주세요.'
+          : '의심되는 사람을 선택하세요 (제한 15초)'}
+      </p>
       <div className="mt-4 grid grid-cols-2 gap-3">
         {targets.map((p) => (
           <button
             key={p.id}
             type="button"
-            disabled={busy}
+            disabled={busy || closed}
             onClick={() => void vote(p.id)}
-            className={`min-h-14 rounded-xl px-4 py-4 text-sm font-bold transition hover:brightness-110 ${
+            className={`flex min-h-14 items-center justify-center gap-2 rounded-xl px-3 py-4 text-sm font-bold transition hover:brightness-110 disabled:opacity-40 ${
               myVote === p.id
                 ? 'bg-amber-400 text-stone-900'
                 : 'bg-white/10 text-white'
             }`}
           >
-            {p.name}
+            <CharacterAvatar avatarId={p.avatarId} isAlive size={32} />
+            <span className="truncate">{p.name}</span>
           </button>
         ))}
       </div>

@@ -109,6 +109,7 @@ export function resolveNight(
     gameState: 'RESULT',
     votes: {},
     matchEndsAt: null,
+    voteEndsAt: null,
     // 부활 투표 세션이면 gmEvent 유지, 아니면 소모
     gmEvent: openRevive ? 'REVIVE_NIGHT' : null,
     isMafiaBuffActive: false,

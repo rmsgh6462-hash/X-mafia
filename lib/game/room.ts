@@ -8,13 +8,20 @@ import {
   type Unsubscribe,
 } from 'firebase/database';
 import { getFirebaseDatabase } from '@/lib/firebase';
+import { isAvatarId, takenAvatarIds } from '@/lib/game/avatars';
 import { generateMafiaHint } from '@/lib/game/hints';
-import { buildRoleDeck } from '@/lib/game/roles';
+import {
+  buildRoleDeck,
+  buildRoleDeckFromCounts,
+  type RoleCountConfig,
+} from '@/lib/game/roles';
 import type {
   GameRoom,
   GhostChatMessage,
+  MatchChatMessage,
   MissionOutcome,
   Player,
+  Role,
   Theme,
   WinnerSide,
 } from '@/types/game';
@@ -47,9 +54,12 @@ export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
     gmEvent: null,
     votes: {},
     matchEndsAt: null,
+    voteEndsAt: null,
     missionOutcome: null,
     createdAt: Date.now(),
     ghostChat: {},
+    matchChats: {},
+    matchChatHistory: {},
     ghostPredictions: {},
   };
 }
@@ -96,12 +106,19 @@ export function alivePlayers(room: GameRoom): Player[] {
   return playerList(room).filter((p) => p.isAlive);
 }
 
-/** 직업 랜덤 배정 후 DAY_TALK로 전환 */
+/** 직업 랜덤 배정 후 DAY_TALK로 전환 (기본 프리셋) */
 export function assignRolesAndStart(room: GameRoom): GameRoom {
-  const players = playerList(room);
-  const deck = buildRoleDeck(players.length);
-  const nextPlayers: Record<string, Player> = {};
+  return startGameWithRoles(room, buildRoleDeck(playerList(room).length));
+}
 
+/** 인원수 지정 랜덤 배정만 수행 (대기 유지 — 교사 확인용) */
+export function assignRolesByCounts(
+  room: GameRoom,
+  counts: RoleCountConfig,
+): GameRoom {
+  const players = playerList(room);
+  const deck = buildRoleDeckFromCounts(players.length, counts);
+  const nextPlayers: Record<string, Player> = {};
   players.forEach((p, i) => {
     nextPlayers[p.id] = {
       ...p,
@@ -111,21 +128,91 @@ export function assignRolesAndStart(room: GameRoom): GameRoom {
       partnerId: null,
     };
   });
+  return { ...room, players: nextPlayers };
+}
 
+/** 수동 직업 맵 적용 (대기 유지) */
+export function assignRolesManual(
+  room: GameRoom,
+  assignments: Record<string, Role | null>,
+): GameRoom {
+  const nextPlayers: Record<string, Player> = {};
+  Object.values(room.players ?? {}).forEach((p) => {
+    const role = assignments[p.id];
+    nextPlayers[p.id] = {
+      ...p,
+      role: role === undefined ? p.role : role,
+    };
+  });
+  return { ...room, players: nextPlayers };
+}
+
+/** 이미 배정된 직업으로 게임 시작 (미배정 있으면 시민 처리) */
+export function startAssignedGame(room: GameRoom): GameRoom {
+  const players = playerList(room);
+  const nextPlayers: Record<string, Player> = {};
+  players.forEach((p) => {
+    nextPlayers[p.id] = {
+      ...p,
+      role: p.role ?? 'CITIZEN',
+      isAlive: true,
+      nightTarget: null,
+      partnerId: null,
+    };
+  });
   return {
     ...room,
     players: nextPlayers,
     gameState: 'DAY_TALK',
     votes: {},
     matchEndsAt: null,
+    voteEndsAt: null,
     missionOutcome: null,
-    currentCitizenMission: null,
     mafiaMission: null,
     nightResults: null,
     currentHint: null,
     isMafiaBuffActive: false,
     gmEvent: null,
+    currentCitizenMission: null,
   };
+}
+
+function startGameWithRoles(room: GameRoom, deck: Role[]): GameRoom {
+  const players = playerList(room);
+  const nextPlayers: Record<string, Player> = {};
+  players.forEach((p, i) => {
+    nextPlayers[p.id] = {
+      ...p,
+      role: deck[i] ?? 'CITIZEN',
+      isAlive: true,
+      nightTarget: null,
+      partnerId: null,
+    };
+  });
+  return {
+    ...room,
+    players: nextPlayers,
+    gameState: 'DAY_TALK',
+    votes: {},
+    matchEndsAt: null,
+    voteEndsAt: null,
+    missionOutcome: null,
+    mafiaMission: null,
+    nightResults: null,
+    currentHint: null,
+    isMafiaBuffActive: false,
+    gmEvent: null,
+    currentCitizenMission: null,
+  };
+}
+
+/** 인원 지정 랜덤 배정 + 즉시 시작 */
+export function assignRolesByCountsAndStart(
+  room: GameRoom,
+  counts: RoleCountConfig,
+): GameRoom {
+  const deck = buildRoleDeckFromCounts(playerList(room).length, counts);
+  return startGameWithRoles(room, deck);
 }
 
 /** 생존자 1:1 랜덤 매칭 + 30초 타이머 */
@@ -149,11 +236,25 @@ export function startMatchPhase(room: GameRoom): GameRoom {
     nextPlayers[b.id] = { ...nextPlayers[b.id], partnerId: a.id };
   }
 
+  // 직전 매칭 채팅은 기록으로 보관 (교사 확인용)
+  const history = { ...(room.matchChatHistory ?? {}) };
+  const prev = room.matchChats ?? {};
+  if (Object.keys(prev).length > 0) {
+    const id = `round_${Date.now()}`;
+    history[id] = {
+      id,
+      createdAt: Date.now(),
+      chats: prev,
+    };
+  }
+
   return {
     ...room,
     players: nextPlayers,
     gameState: 'DAY_MATCH',
     matchEndsAt: Date.now() + 30_000,
+    matchChats: {},
+    matchChatHistory: history,
   };
 }
 
@@ -166,6 +267,7 @@ export function startMissionPhase(room: GameRoom): GameRoom {
     ...room,
     gameState: 'DAY_MISSION',
     matchEndsAt: null,
+    voteEndsAt: null,
     missionOutcome: 'PENDING',
     currentCitizenMission: mission,
     mafiaMission: { description: mafiaDesc, isCompleted: false },
@@ -193,11 +295,59 @@ export function resolveMission(
   };
 }
 
+export const VOTE_DURATION_MS = 15_000;
+export const VOTE_EXTEND_MS = 15_000;
+
 export function startVotePhase(room: GameRoom): GameRoom {
   return {
     ...room,
     gameState: 'DAY_VOTE',
     votes: {},
+    matchEndsAt: null,
+    voteEndsAt: Date.now() + VOTE_DURATION_MS,
+  };
+}
+
+/** 투표 시간 +15초 (남은 시간 기준, 이미 지났으면 지금부터) */
+export function extendVoteTime(
+  room: GameRoom,
+  extraMs: number = VOTE_EXTEND_MS,
+): GameRoom {
+  const base = Math.max(Date.now(), room.voteEndsAt ?? Date.now());
+  return {
+    ...room,
+    voteEndsAt: base + extraMs,
+  };
+}
+
+/**
+ * 투표 마감 — 최다 득표자 1명 탈락(동점이면 무효), 낮 토론으로
+ */
+export function resolveDayVote(room: GameRoom): GameRoom {
+  const tallies = tallyVotes(room);
+  const entries = Object.entries(tallies).sort((a, b) => b[1] - a[1]);
+
+  let eliminatedId: string | null = null;
+  if (entries.length === 1) {
+    eliminatedId = entries[0][0];
+  } else if (entries.length >= 2 && entries[0][1] > entries[1][1]) {
+    eliminatedId = entries[0][0];
+  }
+
+  const nextPlayers: Record<string, Player> = { ...room.players };
+  if (eliminatedId && nextPlayers[eliminatedId]?.isAlive) {
+    nextPlayers[eliminatedId] = {
+      ...nextPlayers[eliminatedId],
+      isAlive: false,
+    };
+  }
+
+  return {
+    ...room,
+    players: nextPlayers,
+    gameState: 'DAY_TALK',
+    votes: {},
+    voteEndsAt: null,
     matchEndsAt: null,
   };
 }
@@ -215,6 +365,7 @@ export function startNightPhase(room: GameRoom): GameRoom {
     gameState: 'NIGHT',
     votes: {},
     matchEndsAt: null,
+    voteEndsAt: null,
     nightResults: null,
   };
 }
@@ -327,8 +478,30 @@ function mapFirebaseError(err: unknown): Error {
   return new Error(`입장 실패: ${message || '알 수 없는 오류'}`);
 }
 
-/** PIN + 이름으로 방 입장 — rooms/{pin}/players/{playerId} 에 set */
-export async function joinRoom(pin: string, name: string): Promise<JoinRoomResult> {
+/** PIN으로 방 미리보기 (캐릭터·닉네임 목록) */
+export async function peekRoom(pin: string): Promise<GameRoom | null> {
+  const trimmedPin = pin.replace(/\s/g, '');
+  if (!/^\d{4,6}$/.test(trimmedPin)) return null;
+  try {
+    const db = getFirebaseDatabase();
+    const snap = await withTimeout(
+      get(ref(db, `rooms/${trimmedPin}`)),
+      10_000,
+      '방 조회 시간 초과',
+    );
+    if (!snap.exists()) return null;
+    return snap.val() as GameRoom;
+  } catch {
+    return null;
+  }
+}
+
+/** PIN + 이름 + 캐릭터로 방 입장 */
+export async function joinRoom(
+  pin: string,
+  name: string,
+  avatarId: string,
+): Promise<JoinRoomResult> {
   const trimmedPin = pin.replace(/\s/g, '');
   const trimmedName = name.trim();
 
@@ -337,6 +510,9 @@ export async function joinRoom(pin: string, name: string): Promise<JoinRoomResul
   }
   if (trimmedName.length < 1 || trimmedName.length > 12) {
     throw new Error('이름은 1~12자로 입력해 주세요.');
+  }
+  if (!isAvatarId(avatarId)) {
+    throw new Error('캐릭터를 선택해 주세요.');
   }
 
   try {
@@ -362,6 +538,21 @@ export async function joinRoom(pin: string, name: string): Promise<JoinRoomResul
 
     const existing = Object.values(players).find((p) => p.name === trimmedName);
     if (existing) {
+      // 같은 이름 재입장: 캐릭터가 비었거나 본인 것이면 갱신 가능
+      const taken = takenAvatarIds(players, existing.id);
+      if (taken.has(avatarId) && existing.avatarId !== avatarId) {
+        throw new Error('이미 다른 학생이 선택한 캐릭터입니다.');
+      }
+      const updated: Player = {
+        ...existing,
+        avatarId,
+        name: trimmedName,
+      };
+      await withTimeout(
+        set(ref(db, `rooms/${trimmedPin}/players/${existing.id}`), updated),
+        12_000,
+        '입장 실패: 플레이어 갱신에 실패했습니다.',
+      );
       const session: PlaySession = {
         pin: trimmedPin,
         roomId: trimmedPin,
@@ -371,9 +562,17 @@ export async function joinRoom(pin: string, name: string): Promise<JoinRoomResul
       savePlaySession(session);
       return {
         session,
-        room: { ...room, players: { ...players, [existing.id]: existing } },
-        player: existing,
+        room: {
+          ...room,
+          players: { ...players, [existing.id]: updated },
+        },
+        player: updated,
       };
+    }
+
+    const taken = takenAvatarIds(players);
+    if (taken.has(avatarId)) {
+      throw new Error('이미 다른 학생이 선택한 캐릭터입니다. 다른 캐릭터를 골라 주세요.');
     }
 
     const playerId = `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -384,7 +583,7 @@ export async function joinRoom(pin: string, name: string): Promise<JoinRoomResul
       isAlive: true,
       nightTarget: null,
       partnerId: null,
-      avatarIndex: Object.keys(players).length % 8,
+      avatarId,
     };
 
     const playerRef = ref(db, `rooms/${trimmedPin}/players/${playerId}`);
@@ -394,7 +593,6 @@ export async function joinRoom(pin: string, name: string): Promise<JoinRoomResul
       '입장 실패: 플레이어 저장에 실패했습니다. Firebase 규칙을 확인하세요.',
     );
 
-    // 저장 확인
     const verify = await withTimeout(
       get(playerRef),
       8_000,
@@ -446,6 +644,21 @@ export async function sendGhostChat(
 ): Promise<void> {
   const db = getFirebaseDatabase();
   const chatRef = push(ref(db, `rooms/${pin}/ghostChat`));
+  await set(chatRef, { ...message, id: chatRef.key });
+}
+
+/** 1:1 매칭 페어 키 (정렬된 playerId) */
+export function matchPairKey(a: string, b: string): string {
+  return [a, b].sort().join('_');
+}
+
+export async function sendMatchChat(
+  pin: string,
+  pairKey: string,
+  message: Omit<MatchChatMessage, 'id'>,
+): Promise<void> {
+  const db = getFirebaseDatabase();
+  const chatRef = push(ref(db, `rooms/${pin}/matchChats/${pairKey}`));
   await set(chatRef, { ...message, id: chatRef.key });
 }
 

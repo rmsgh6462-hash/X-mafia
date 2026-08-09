@@ -38,6 +38,23 @@ export interface GhostChatMessage {
   createdAt: number;
 }
 
+/** 1:1 매칭 채팅 메시지 */
+export interface MatchChatMessage {
+  id: string;
+  playerId: string;
+  playerName: string;
+  text: string;
+  createdAt: number;
+}
+
+/** 지난 매칭 라운드 채팅 스냅샷 */
+export interface MatchChatRound {
+  id: string;
+  createdAt: number;
+  /** pairKey → messages */
+  chats: Record<string, Record<string, MatchChatMessage>>;
+}
+
 /** 시민 미션 (설명 + 제한시간) */
 export interface CitizenMission {
   /** 미션 설명 */
@@ -75,8 +92,10 @@ export interface Player {
   nightTarget: string | null;
   /** 1:1 매칭 파트너 플레이어 ID */
   partnerId: string | null;
-  /** 아바타 이미지 인덱스 */
-  avatarIndex: number;
+  /** 캐릭터 ID (M0–M15 / F0–F15) */
+  avatarId: string;
+  /** @deprecated avatarId 사용 — 하위 호환 */
+  avatarIndex?: number;
 }
 
 /** 게임 룸 전체 상태 (Realtime Database rooms/{roomId} 스키마) */
@@ -104,11 +123,17 @@ export interface GameRoom {
   votes: Record<string, string>;
   /** 1:1 매칭 종료 시각 (epoch ms) */
   matchEndsAt: number | null;
+  /** 낮 투표 종료 시각 (epoch ms) */
+  voteEndsAt: number | null;
   /** 미션 승인 상태 */
   missionOutcome: MissionOutcome;
   createdAt: number;
   /** 유령 전용 채팅 */
   ghostChat: Record<string, GhostChatMessage>;
+  /** 1:1 매칭 채팅 — key: pairKey(sorted playerIds) → messages */
+  matchChats: Record<string, Record<string, MatchChatMessage>>;
+  /** 이전 매칭 라운드 채팅 기록 (교사 확인용) */
+  matchChatHistory: Record<string, MatchChatRound>;
   /** 유령 승자 예측 투표: playerId → side */
   ghostPredictions: Record<string, WinnerSide>;
 }

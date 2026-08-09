@@ -9,7 +9,7 @@ function shuffle<T>(items: T[]): T[] {
   return arr;
 }
 
-/** 인원수에 맞춰 직업 목록을 구성한 뒤 셔플 */
+/** 인원수에 맞춰 직업 목록을 구성한 뒤 셔플 (기본 프리셋) */
 export function buildRoleDeck(playerCount: number): Role[] {
   if (playerCount <= 0) return [];
 
@@ -24,6 +24,66 @@ export function buildRoleDeck(playerCount: number): Role[] {
   while (roles.length < playerCount) roles.push('CITIZEN');
 
   return shuffle(roles).slice(0, playerCount);
+}
+
+/** 교사 지정 인원수로 직업 덱 생성 (나머지는 시민) */
+export type RoleCountConfig = {
+  MAFIA: number;
+  DOCTOR: number;
+  POLICE: number;
+  REPORTER: number;
+  SPIRITUALIST: number;
+};
+
+export const DEFAULT_ROLE_COUNTS: RoleCountConfig = {
+  MAFIA: 1,
+  DOCTOR: 1,
+  POLICE: 1,
+  REPORTER: 0,
+  SPIRITUALIST: 0,
+};
+
+export function suggestedRoleCounts(playerCount: number): RoleCountConfig {
+  return {
+    MAFIA: Math.max(1, Math.floor(playerCount / 4)),
+    DOCTOR: playerCount >= 5 ? 1 : 0,
+    POLICE: playerCount >= 6 ? 1 : 0,
+    REPORTER: playerCount >= 7 ? 1 : 0,
+    SPIRITUALIST: playerCount >= 8 ? 1 : 0,
+  };
+}
+
+export function specialRoleTotal(counts: RoleCountConfig): number {
+  return (
+    counts.MAFIA +
+    counts.DOCTOR +
+    counts.POLICE +
+    counts.REPORTER +
+    counts.SPIRITUALIST
+  );
+}
+
+export function buildRoleDeckFromCounts(
+  playerCount: number,
+  counts: RoleCountConfig,
+): Role[] {
+  if (playerCount <= 0) return [];
+  const special = specialRoleTotal(counts);
+  if (special > playerCount) {
+    throw new Error(
+      `특수 직업 합(${special})이 전체 인원(${playerCount})보다 많습니다.`,
+    );
+  }
+
+  const roles: Role[] = [];
+  for (let i = 0; i < counts.MAFIA; i += 1) roles.push('MAFIA');
+  for (let i = 0; i < counts.DOCTOR; i += 1) roles.push('DOCTOR');
+  for (let i = 0; i < counts.POLICE; i += 1) roles.push('POLICE');
+  for (let i = 0; i < counts.REPORTER; i += 1) roles.push('REPORTER');
+  for (let i = 0; i < counts.SPIRITUALIST; i += 1) roles.push('SPIRITUALIST');
+  while (roles.length < playerCount) roles.push('CITIZEN');
+
+  return shuffle(roles);
 }
 
 export const ROLE_LABELS: Record<Role, string> = {
@@ -52,3 +112,12 @@ export const ROLE_ACCENTS: Record<Role, string> = {
   REPORTER: '#c47a1a',
   SPIRITUALIST: '#6b4c9a',
 };
+
+export const ASSIGNABLE_ROLES: Role[] = [
+  'CITIZEN',
+  'MAFIA',
+  'DOCTOR',
+  'POLICE',
+  'REPORTER',
+  'SPIRITUALIST',
+];

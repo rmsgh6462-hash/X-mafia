@@ -11,18 +11,27 @@ import {
   Swords,
   Sunrise,
   Target,
+  Timer,
   Users,
   Vote,
   Check,
   X,
   Volume2,
   HeartHandshake,
+  Plus,
+  Square,
 } from 'lucide-react';
 import GameBackground, {
   type BackgroundPhase,
 } from '@/components/GameBackground';
 import { GmPanel } from '@/components/host/GmPanel';
+import { MatchChatMonitor } from '@/components/host/MatchChatMonitor';
+import { NightActivityBoard } from '@/components/host/NightActivityBoard';
+import { RoleAssignPanel } from '@/components/host/RoleAssignPanel';
+import { PlayerRoster } from '@/components/play/PlayerRoster';
+import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { isFirebaseConfigured } from '@/lib/firebase';
+import { firstFreeAvatarId } from '@/lib/game/avatars';
 import { playPhaseBgm, speak, speakPhase, stopAllAudio } from '@/lib/game/audio';
 import {
   dismissMorningResult,
@@ -33,12 +42,18 @@ import {
 import {
   alivePlayers,
   assignRolesAndStart,
+  assignRolesByCounts,
+  assignRolesByCountsAndStart,
+  assignRolesManual,
   createEmptyRoom,
+  extendVoteTime,
   generatePin,
   patchRoom,
   playerList,
+  resolveDayVote,
   resolveMission,
   saveRoom,
+  startAssignedGame,
   startMatchPhase,
   startMissionPhase,
   startNightPhase,
@@ -95,23 +110,32 @@ export default function HostPage() {
     return Math.max(0, Math.ceil((room.matchEndsAt - now) / 1000));
   }, [room?.matchEndsAt, now]);
 
+  const voteRemainSec = useMemo(() => {
+    if (!room?.voteEndsAt) return 0;
+    return Math.max(0, Math.ceil((room.voteEndsAt - now) / 1000));
+  }, [room?.voteEndsAt, now]);
+
   const voteTallies = useMemo(() => (room ? tallyVotes(room) : {}), [room]);
   const totalVotes = useMemo(
     () => Object.values(voteTallies).reduce((a, b) => a + b, 0),
     [voteTallies],
   );
+  const voteAutoEndedRef = useRef<number | null>(null);
 
   // 클라이언트 join URL
   useEffect(() => {
     setJoinUrl(window.location.origin);
   }, []);
 
-  // 매칭 타이머 틱
+  // 매칭·투표 타이머 틱
   useEffect(() => {
-    if (room?.gameState !== 'DAY_MATCH' || !room.matchEndsAt) return;
+    const needTick =
+      (room?.gameState === 'DAY_MATCH' && room.matchEndsAt) ||
+      (room?.gameState === 'DAY_VOTE' && room.voteEndsAt);
+    if (!needTick) return;
     const id = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(id);
-  }, [room?.gameState, room?.matchEndsAt]);
+  }, [room?.gameState, room?.matchEndsAt, room?.voteEndsAt]);
 
   // Firebase 구독
   useEffect(() => {
@@ -158,6 +182,19 @@ export default function HostPage() {
       );
     }
   }, []);
+
+  // 투표 시간 만료 → 자동 마감
+  useEffect(() => {
+    if (!room || room.gameState !== 'DAY_VOTE' || !room.voteEndsAt) return;
+    if (Date.now() < room.voteEndsAt) return;
+    if (voteAutoEndedRef.current === room.voteEndsAt) return;
+    voteAutoEndedRef.current = room.voteEndsAt;
+    void (async () => {
+      const next = resolveDayVote(room);
+      await commitRoom(next);
+      speak('투표가 종료되었습니다.');
+    })();
+  }, [room, now, commitRoom]);
 
   const enableAudio = useCallback(async () => {
     setAudioReady(true);
@@ -363,24 +400,53 @@ export default function HostPage() {
                 initial={{ opacity: 0, scale: 0.96 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.98 }}
-                className="flex w-full max-w-5xl flex-col items-center gap-8 md:flex-row md:items-stretch md:justify-center md:gap-14"
+                className="flex w-full max-w-5xl flex-col items-center"
               >
-                <div className="flex flex-col items-center justify-center rounded-2xl bg-white p-5 shadow-2xl shadow-black/40">
-                  <QRCode value={qrValue} size={220} level="M" />
-                  <p className="mt-3 text-xs font-medium text-stone-500">
-                    학생 기기에서 스캔
-                  </p>
+                <div className="flex w-full flex-col items-center gap-8 md:flex-row md:items-stretch md:justify-center md:gap-14">
+                  <div className="flex flex-col items-center justify-center rounded-2xl bg-white p-5 shadow-2xl shadow-black/40">
+                    <QRCode value={qrValue} size={220} level="M" />
+                    <p className="mt-3 text-xs font-medium text-stone-500">
+                      학생 기기에서 스캔
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-center justify-center text-center">
+                    <p className="text-sm font-semibold uppercase tracking-[0.25em] text-white/70">
+                      PIN CODE
+                    </p>
+                    <p className="mt-2 font-mono text-6xl font-black tracking-widest text-white drop-shadow-lg md:text-8xl">
+                      {formatPin(room.pin)}
+                    </p>
+                    <p className="mt-4 text-lg text-white/80">
+                      참가 대기 중 · {playerCount}명 입장
+                    </p>
+                  </div>
                 </div>
-                <div className="flex flex-col items-center justify-center text-center">
-                  <p className="text-sm font-semibold uppercase tracking-[0.25em] text-white/70">
-                    PIN CODE
-                  </p>
-                  <p className="mt-2 font-mono text-6xl font-black tracking-widest text-white drop-shadow-lg md:text-8xl">
-                    {formatPin(room.pin)}
-                  </p>
-                  <p className="mt-4 text-lg text-white/80">
-                    참가 대기 중 · {playerCount}명 입장
-                  </p>
+                <div className="mt-8 w-full max-w-4xl space-y-4">
+                  <PlayerRoster room={room} title="입장한 학생" showRoles />
+                  <RoleAssignPanel
+                    room={room}
+                    busy={busy}
+                    onRandomAssign={(counts, startNow) => {
+                      if (startNow) {
+                        void runAction(
+                          (r) => assignRolesByCountsAndStart(r, counts),
+                          4,
+                        );
+                        speak('직업을 배정하고 게임을 시작합니다.');
+                      } else {
+                        void runAction((r) => assignRolesByCounts(r, counts));
+                        speak('직업을 랜덤 배정했습니다.');
+                      }
+                    }}
+                    onManualAssign={(assignments) => {
+                      void runAction((r) => assignRolesManual(r, assignments));
+                      speak('수동 직업 배정을 저장했습니다.');
+                    }}
+                    onStart={() => {
+                      void runAction(startAssignedGame, 4);
+                      speak('게임을 시작합니다.');
+                    }}
+                  />
                 </div>
               </motion.div>
             ) : room.gameState === 'DAY_MATCH' ? (
@@ -388,7 +454,9 @@ export default function HostPage() {
                 <div className="text-7xl font-black tabular-nums text-amber-300 md:text-8xl">
                   {matchRemainSec}
                 </div>
-                <p className="mt-2 text-white/80">초 남음 · 파트너와 대화하세요</p>
+                <p className="mt-2 text-white/80">
+                  초 남음 · 휴대폰 채팅으로 파트너와 대화하세요
+                </p>
                 <PartnerGrid room={room} />
               </StagePanel>
             ) : room.gameState === 'DAY_MISSION' ? (
@@ -407,20 +475,56 @@ export default function HostPage() {
                 )}
               </StagePanel>
             ) : room.gameState === 'DAY_VOTE' ? (
-              <StagePanel key="vote" title="실시간 투표">
+              <StagePanel key="vote" title="실시간 투표 · 15초">
+                <div
+                  className={`mb-6 font-black tabular-nums ${
+                    voteRemainSec <= 5 ? 'text-red-300' : 'text-amber-300'
+                  } text-6xl md:text-7xl`}
+                >
+                  {voteRemainSec}
+                </div>
+                <p className="mb-6 text-sm text-white/70">초 남음</p>
                 <VoteBoard
                   room={room}
                   alive={alive}
                   tallies={voteTallies}
                   totalVotes={totalVotes}
                 />
+                <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      void runAction(extendVoteTime);
+                      speak('투표 시간을 십오 초 연장합니다.');
+                    }}
+                    className="inline-flex items-center gap-2 rounded-xl bg-sky-500 px-5 py-3 text-sm font-black text-white hover:bg-sky-400 disabled:opacity-50"
+                  >
+                    <Plus className="h-4 w-4" />
+                    +15초 연장
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      void runAction(resolveDayVote);
+                      speak('투표를 종료합니다.');
+                    }}
+                    className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-3 text-sm font-black text-white hover:bg-red-500 disabled:opacity-50"
+                  >
+                    <Square className="h-4 w-4" />
+                    투표 종료
+                  </button>
+                </div>
               </StagePanel>
             ) : room.gameState === 'NIGHT' ? (
-              <StagePanel key="night" title="밤이 되었습니다">
-                <Moon className="mx-auto h-16 w-16 text-red-300" />
-                <p className="mt-4 text-xl text-white/85">
-                  눈을 감고 능력을 사용할 차례입니다
-                </p>
+              <StagePanel key="night" title="밤 — 직업별 활동 모니터">
+                <div className="flex flex-wrap items-center justify-center gap-4">
+                  <Moon className="h-10 w-10 text-red-300" />
+                  <p className="text-lg text-white/85">
+                    학생 능력 사용을 실시간으로 확인하세요
+                  </p>
+                </div>
                 {room.gmEvent === 'SILENCE_NIGHT' && (
                   <p className="mt-3 text-sm font-semibold text-slate-200">
                     정전 — 경찰·의사 능력 무효
@@ -431,6 +535,14 @@ export default function HostPage() {
                     기회의 밤 — 사망자 부활 투표 예정
                   </p>
                 )}
+                {room.isMafiaBuffActive && (
+                  <p className="mt-2 text-sm font-semibold text-red-300">
+                    멀티킬 버프 활성 — 마피아 각자 독립 지목
+                  </p>
+                )}
+
+                <NightActivityBoard room={room} />
+
                 <button
                   type="button"
                   disabled={busy}
@@ -465,6 +577,17 @@ export default function HostPage() {
               </StagePanel>
             )}
           </AnimatePresence>
+
+          {/* 매칭 채팅: 실시간 + 종료 후에도 교사 확인 */}
+          {room &&
+            (room.gameState === 'DAY_MATCH' ||
+              Object.keys(room.matchChats ?? {}).length > 0 ||
+              Object.keys(room.matchChatHistory ?? {}).length > 0) && (
+              <MatchChatMonitor
+                room={room}
+                live={room.gameState === 'DAY_MATCH'}
+              />
+            )}
 
           {error && (
             <p className="mt-6 max-w-xl rounded-lg bg-red-950/70 px-4 py-2 text-center text-sm text-red-100">
@@ -518,6 +641,26 @@ export default function HostPage() {
               onClick={() => void runAction(startVotePhase, 2)}
             />
             <ControlBtn
+              icon={<Timer className="h-4 w-4" />}
+              label="+15초"
+              disabled={!room || busy || room.gameState !== 'DAY_VOTE'}
+              onClick={() => {
+                void runAction(extendVoteTime);
+                speak('투표 시간을 십오 초 연장합니다.');
+              }}
+              accent="amber"
+            />
+            <ControlBtn
+              icon={<Square className="h-4 w-4" />}
+              label="투표 종료"
+              disabled={!room || busy || room.gameState !== 'DAY_VOTE'}
+              onClick={() => {
+                void runAction(resolveDayVote);
+                speak('투표를 종료합니다.');
+              }}
+              accent="red"
+            />
+            <ControlBtn
               icon={<Moon className="h-4 w-4" />}
               label="밤 시작"
               disabled={!room || busy || room.gameState === 'WAITING'}
@@ -545,6 +688,7 @@ export default function HostPage() {
               onClick={() => {
                 if (!room) return;
                 const id = `demo_${Date.now()}`;
+                const avatarId = firstFreeAvatarId(room.players);
                 const next: GameRoom = {
                   ...room,
                   players: {
@@ -556,7 +700,7 @@ export default function HostPage() {
                       isAlive: true,
                       nightTarget: null,
                       partnerId: null,
-                      avatarIndex: playerCount % 8,
+                      avatarId,
                     },
                   },
                 };
@@ -668,8 +812,15 @@ function MorningResultStage({
                     transition={{ delay: 0.35 + index * 0.45, duration: 0.55 }}
                     className="flex items-center justify-between rounded-xl bg-red-950/55 px-5 py-4 ring-1 ring-red-400/35"
                   >
-                    <span className="text-2xl font-black text-white">
-                      {p?.name ?? '???'}
+                    <span className="flex items-center gap-3">
+                      <CharacterAvatar
+                        avatarId={p?.avatarId}
+                        isAlive={false}
+                        size={48}
+                      />
+                      <span className="text-2xl font-black text-white">
+                        {p?.name ?? '???'}
+                      </span>
                     </span>
                     <span className="rounded-md bg-black/40 px-3 py-1 font-mono text-sm font-bold tracking-widest text-white/55">
                       ???
@@ -811,18 +962,8 @@ function PartnerGrid({ room }: { room: GameRoom }) {
 
 function PlayerChips({ room }: { room: GameRoom }) {
   return (
-    <div className="mt-6 flex flex-wrap justify-center gap-2">
-      {playerList(room).map((p) => (
-        <span
-          key={p.id}
-          className={`rounded-lg px-3 py-1.5 text-sm ${
-            p.isAlive ? 'bg-white/15' : 'bg-black/50 text-white/45 line-through'
-          }`}
-        >
-          {p.name}
-          {!p.isAlive ? ' · ???' : ''}
-        </span>
-      ))}
+    <div className="mt-6">
+      <PlayerRoster room={room} compact title="플레이어" />
     </div>
   );
 }
