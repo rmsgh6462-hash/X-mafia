@@ -1,15 +1,13 @@
 ﻿'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, Send, Sparkles } from 'lucide-react';
 import { MathText } from '@/components/math/MathText';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { NightPanel } from '@/components/play/NightPanel';
 import { getNightQuizStats } from '@/lib/game/missions';
 import {
-  normalizeGameRoom,
-  resolveNightQuizTimeout,
-  saveRoom,
+  finalizeNightQuizOnTimeout,
   submitNightQuizAnswer,
 } from '@/lib/game/room';
 import type { GameRoom, Player } from '@/types/game';
@@ -120,6 +118,10 @@ export function NightQuizPlayPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const answerRef = useRef(answer);
+  const timeoutHandledRef = useRef<number | null>(null);
+  const earlySubmitRef = useRef<number | null>(null);
+  answerRef.current = answer;
 
   const peerId = quiz?.peerMap?.[me.id];
   const peer = peerId ? room.players[peerId] : null;
@@ -133,6 +135,14 @@ export function NightQuizPlayPanel({
       ? Math.max(0, Math.min(1, (quiz.endsAt - now) / (quiz.timeLimitSec * 1000)))
       : 0;
 
+  // 새 퀴즈가 시작되면 선택·타임아웃 처리 상태 초기화
+  useEffect(() => {
+    setAnswer('');
+    setError(null);
+    timeoutHandledRef.current = null;
+    earlySubmitRef.current = null;
+  }, [quiz?.endsAt, quiz?.question]);
+
   // 타이머 틱
   useEffect(() => {
     if (!quiz?.active || quiz.outcome !== 'PENDING') return;
@@ -140,25 +150,50 @@ export function NightQuizPlayPanel({
     return () => window.clearInterval(id);
   }, [quiz?.active, quiz?.outcome, quiz?.endsAt]);
 
-  // 시간 초과 → 서버에 타임아웃 판정 요청 (한 번)
+  // 종료 1초 전: 선택만 된 답안을 먼저 제출 (교사 판정과의 경합 방지)
+  useEffect(() => {
+    if (!quiz?.active || quiz.outcome !== 'PENDING') return;
+    if (submission) return;
+    if (remainSec > 1) return;
+    const selected = answerRef.current.trim();
+    if (!selected) return;
+    if (earlySubmitRef.current === quiz.endsAt) return;
+    earlySubmitRef.current = quiz.endsAt;
+    void submitNightQuizAnswer(pin, me.id, selected).catch(() => {
+      /* 종료 시 finalizeNightQuizOnTimeout 이 재시도 */
+    });
+  }, [
+    remainSec,
+    quiz?.active,
+    quiz?.outcome,
+    quiz?.endsAt,
+    submission,
+    pin,
+    me.id,
+  ]);
+
+  // 시간 초과 → 선택 답안 반영 후 판정
   useEffect(() => {
     if (!quiz?.active || quiz.outcome !== 'PENDING') return;
     if (now < quiz.endsAt) return;
+    if (timeoutHandledRef.current === quiz.endsAt) return;
+    timeoutHandledRef.current = quiz.endsAt;
+
     let cancelled = false;
     void (async () => {
       try {
-        const next = resolveNightQuizTimeout(normalizeGameRoom(room));
-        if (!cancelled && next !== room) {
-          await saveRoom(next);
+        const selected = answerRef.current.trim();
+        await finalizeNightQuizOnTimeout(pin, me.id, selected || null);
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : '시간 종료 처리 실패');
         }
-      } catch {
-        /* host가 처리할 수 있음 */
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [now, quiz?.endsAt, quiz?.active, quiz?.outcome, pin, room]);
+  }, [now, quiz?.endsAt, quiz?.active, quiz?.outcome, pin, me.id]);
 
   if (!quiz) {
     return (
@@ -254,7 +289,10 @@ export function NightQuizPlayPanel({
                 key={`${i}-${c}`}
                 type="button"
                 disabled={busy}
-                onClick={() => setAnswer(c)}
+                onClick={() => {
+                  setAnswer(c);
+                  setError(null);
+                }}
                 className={`rounded-xl px-3 py-3.5 text-left text-sm font-bold transition ${
                   answer === c
                     ? 'bg-amber-400 text-stone-900 ring-2 ring-amber-200'
@@ -266,6 +304,11 @@ export function NightQuizPlayPanel({
               </button>
             ))}
           </div>
+          {answer.trim() && (
+            <p className="text-[11px] text-white/45">
+              선택한 답안은 제출하지 않아도 시간이 끝나면 자동 제출됩니다.
+            </p>
+          )}
           {error && <p className="text-xs text-red-300">{error}</p>}
           <button
             type="button"
@@ -289,8 +332,10 @@ export function NightQuizPlayPanel({
           {submission.answer === '(시간초과)' ? ' (시간초과)' : ''}
         </p>
       ) : timedOut ? (
-        <p className="rounded-xl bg-red-500/20 px-3 py-3 text-center text-sm font-bold text-red-200">
-          시간 초과 — 오답 처리됩니다
+        <p className="rounded-xl bg-amber-500/20 px-3 py-3 text-center text-sm font-bold text-amber-100">
+          {answer.trim()
+            ? '시간 종료 — 선택한 답안을 자동 제출합니다…'
+            : '시간 초과 — 오답 처리됩니다'}
         </p>
       ) : null}
     </section>

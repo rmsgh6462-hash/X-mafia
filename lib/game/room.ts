@@ -37,6 +37,7 @@ import type {
   MissionOutcome,
   MissionSubmission,
   NightQuizConfig,
+  NightQuizState,
   Player,
   Role,
   Theme,
@@ -186,6 +187,19 @@ export function subscribeRoom(
   });
 }
 
+/** Firebase는 빈 객체 {} 를 저장하지 않으므로 submissions/peerMap 이 빠질 수 있다. */
+function normalizeNightQuizState(
+  quiz: NightQuizState | null | undefined,
+): NightQuizState | null {
+  if (!quiz) return null;
+  return {
+    ...quiz,
+    choices: Array.isArray(quiz.choices) ? quiz.choices : [],
+    submissions: quiz.submissions ?? {},
+    peerMap: quiz.peerMap ?? {},
+  };
+}
+
 /** Firebase에 없는 새 필드 기본값 보정 */
 export function normalizeGameRoom(room: GameRoom): GameRoom {
   const players: Record<string, Player> = {};
@@ -210,7 +224,7 @@ export function normalizeGameRoom(room: GameRoom): GameRoom {
     // 기존 방 데이터의 테마도 새 정책에 맞춰 마을로 통일한다.
     theme: 'VILLAGE',
     players,
-    nightQuizState: room.nightQuizState ?? null,
+    nightQuizState: normalizeNightQuizState(room.nightQuizState),
     mafiaMissionState: room.mafiaMissionState ?? emptyMafiaMissionState(),
     pendingMafiaNightBuff: room.pendingMafiaNightBuff === true,
     isMafiaBuffActive: room.isMafiaBuffActive === true,
@@ -491,7 +505,7 @@ export function markUnansweredAsTimeout(room: GameRoom): GameRoom {
   if (!quiz) return room;
 
   const alive = Object.values(room.players ?? {}).filter((p) => p.isAlive);
-  const submissions = { ...quiz.submissions };
+  const submissions = { ...(quiz.submissions ?? {}) };
   let changed = false;
   let disruptAdds = 0;
 
@@ -591,7 +605,8 @@ export function applyNightQuizSubmission(
   }
   const player = room.players[playerId];
   if (!player?.isAlive) return room;
-  if (quiz.submissions[playerId]) return room;
+  const submissions = quiz.submissions ?? {};
+  if (submissions[playerId]) return room;
 
   const correct = isAnswerCorrect(quiz.answer, answer);
   const submission: MissionSubmission = {
@@ -605,7 +620,7 @@ export function applyNightQuizSubmission(
     ...room,
     nightQuizState: {
       ...quiz,
-      submissions: { ...quiz.submissions, [playerId]: submission },
+      submissions: { ...submissions, [playerId]: submission },
     },
   };
 
@@ -651,6 +666,35 @@ export async function submitNightQuizAnswer(
     answer,
   );
   await set(roomRef, toFirebaseJson(normalizeGameRoom(next)));
+}
+
+/**
+ * 시간 종료 시: 선택만 한 답안이 있으면 제출한 뒤, 미제출자를 시간초과 처리하고 판정한다.
+ */
+export async function finalizeNightQuizOnTimeout(
+  pin: string,
+  playerId: string,
+  selectedAnswer?: string | null,
+): Promise<void> {
+  const db = getFirebaseDatabase();
+  const roomRef = ref(db, `rooms/${pin}`);
+  const snap = await get(roomRef);
+  if (!snap.exists()) throw new Error('방이 없습니다.');
+
+  let room = normalizeGameRoom(snap.val() as GameRoom);
+  const quiz = room.nightQuizState;
+  if (!quiz?.active || quiz.outcome === 'SUCCESS' || quiz.outcome === 'FAIL') {
+    return;
+  }
+
+  const trimmed = selectedAnswer?.trim() ?? '';
+  const already = Boolean((quiz.submissions ?? {})[playerId]);
+  if (trimmed && !already) {
+    room = applyNightQuizSubmission(room, playerId, trimmed);
+  }
+
+  room = resolveNightQuizTimeout(room);
+  await set(roomRef, toFirebaseJson(normalizeGameRoom(room)));
 }
 
 /** @deprecated */
