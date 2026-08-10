@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Bolt, Eye, EyeOff, Ghost, MessageSquareWarning, Vote, ZapOff } from 'lucide-react';
+import { Bolt, Crosshair, Eye, EyeOff, Ghost, Lock, MessageSquareWarning, Vote, ZapOff } from 'lucide-react';
 import type { GameRoom, GmEvent, VoteTieResolution } from '@/types/game';
 
 export function GmPanel({
@@ -13,6 +13,8 @@ export function GmPanel({
   onReviveNight,
   onVoteTieResolutionChange,
   onRevealDeathRolesChange,
+  onAllowMafiaTargetMafiaChange,
+  onMafiaChatEnabledChange,
 }: {
   room: GameRoom;
   disabled?: boolean;
@@ -22,12 +24,16 @@ export function GmPanel({
   onReviveNight: () => void;
   onVoteTieResolutionChange: (mode: VoteTieResolution) => void;
   onRevealDeathRolesChange: (enabled: boolean) => void;
+  onAllowMafiaTargetMafiaChange: (enabled: boolean) => void;
+  onMafiaChatEnabledChange: (enabled: boolean) => void;
 }) {
   const [hint, setHint] = useState('');
 
   const active = room.gmEvent;
   const tieMode = room.voteTieResolution ?? 'RANDOM';
   const revealRoles = room.revealDeathRoles !== false;
+  const allowMafiaTargetMafia = room.allowMafiaTargetMafia !== false;
+  const mafiaChatEnabled = room.mafiaChatEnabled !== false;
 
   return (
     <aside className="w-full max-w-md rounded-2xl border border-amber-500/25 bg-stone-950/75 p-4 shadow-xl backdrop-blur-md">
@@ -103,6 +109,70 @@ export function GmPanel({
             {revealRoles
               ? 'ON — 투표·밤 탈락 시 실제 직업을 전원에게 공개'
               : 'OFF — 탈락 사실만 안내 (직업 ???)'}
+          </p>
+        </div>
+
+        {/* 마피아끼리 지목 */}
+        <div className="rounded-xl bg-white/5 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="flex items-center gap-1.5 text-xs font-bold text-white/70">
+              <Crosshair className="h-3.5 w-3.5 text-red-300" />
+              마피아끼리 지목
+            </p>
+            <button
+              type="button"
+              disabled={disabled}
+              role="switch"
+              aria-checked={allowMafiaTargetMafia}
+              onClick={() =>
+                onAllowMafiaTargetMafiaChange(!allowMafiaTargetMafia)
+              }
+              className={`relative h-7 w-12 shrink-0 rounded-full transition disabled:opacity-40 ${
+                allowMafiaTargetMafia ? 'bg-red-500' : 'bg-white/20'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition ${
+                  allowMafiaTargetMafia ? 'left-5' : 'left-0.5'
+                }`}
+              />
+            </button>
+          </div>
+          <p className="mt-1.5 text-[10px] text-white/45">
+            {allowMafiaTargetMafia
+              ? 'ON — 마피아가 동료 마피아도 밤 지목 가능'
+              : 'OFF — 동료 마피아는 지목 불가 (시민 측만 선택)'}
+          </p>
+        </div>
+
+        {/* 마피아 비밀 채팅 */}
+        <div className="rounded-xl bg-white/5 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="flex items-center gap-1.5 text-xs font-bold text-white/70">
+              <Lock className="h-3.5 w-3.5 text-red-300" />
+              마피아 비밀 채팅
+            </p>
+            <button
+              type="button"
+              disabled={disabled}
+              role="switch"
+              aria-checked={mafiaChatEnabled}
+              onClick={() => onMafiaChatEnabledChange(!mafiaChatEnabled)}
+              className={`relative h-7 w-12 shrink-0 rounded-full transition disabled:opacity-40 ${
+                mafiaChatEnabled ? 'bg-red-500' : 'bg-white/20'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition ${
+                  mafiaChatEnabled ? 'left-5' : 'left-0.5'
+                }`}
+              />
+            </button>
+          </div>
+          <p className="mt-1.5 text-[10px] text-white/45">
+            {mafiaChatEnabled
+              ? 'ON — 생존 마피아끼리 비밀 채팅 사용'
+              : 'OFF — 학생 채팅 숨김·전송 불가 (교사는 기록 열람 가능)'}
           </p>
         </div>
 

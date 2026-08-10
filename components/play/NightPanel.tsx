@@ -118,12 +118,33 @@ export function NightPanel({
     return new Set(getMafiaAllies(room, me).map((p) => p.id));
   }, [role, room, me]);
 
+  const allowMafiaTargetMafia = room.allowMafiaTargetMafia !== false;
+
+  const mafiaDisabledIds = useMemo(() => {
+    if (role !== 'MAFIA' || allowMafiaTargetMafia) return new Set<string>();
+    return mafiaAllyIds;
+  }, [role, allowMafiaTargetMafia, mafiaAllyIds]);
+
+  const mafiaDisabledHints = useMemo(() => {
+    if (role !== 'MAFIA' || allowMafiaTargetMafia) return {};
+    const hints: Record<string, string> = {};
+    mafiaAllyIds.forEach((id) => {
+      hints[id] = '마피아끼리 지목 불가';
+    });
+    return hints;
+  }, [role, allowMafiaTargetMafia, mafiaAllyIds]);
+
   const title = useMemo(() => {
     switch (role) {
       case 'MAFIA':
-        return room.isMafiaBuffActive
-          ? '타겟 지목 (미션 보상 — 각자 1명 독립 공격)'
-          : '타겟 지목 (다른 마피아도 지목 가능)';
+        if (room.isMafiaBuffActive) {
+          return allowMafiaTargetMafia
+            ? '타겟 지목 (미션 보상 — 각자 1명 독립 공격)'
+            : '타겟 지목 (미션 보상 · 동료 마피아 지목 불가)';
+        }
+        return allowMafiaTargetMafia
+          ? '타겟 지목 (다른 마피아도 지목 가능)'
+          : '타겟 지목 (동료 마피아는 지목 불가)';
       case 'DOCTOR':
         return selfHealUsed
           ? '살릴 플레이어 선택 (자힐 사용 완료)'
@@ -137,7 +158,7 @@ export function NightPanel({
       default:
         return '밤에는 조용히 대기';
     }
-  }, [role, room.isMafiaBuffActive, selfHealUsed]);
+  }, [role, room.isMafiaBuffActive, selfHealUsed, allowMafiaTargetMafia]);
 
   const silenced =
     room.gmEvent === 'SILENCE_NIGHT' &&
@@ -147,6 +168,14 @@ export function NightPanel({
     if (!role || role === 'CITIZEN' || silenced) return;
     if (role === 'DOCTOR' && targetId === me.id && selfHealUsed) {
       setResult('자기 치료(자힐)는 이미 사용했습니다.');
+      return;
+    }
+    if (
+      role === 'MAFIA' &&
+      !allowMafiaTargetMafia &&
+      mafiaAllyIds.has(targetId)
+    ) {
+      setResult('지금은 마피아끼리 지목할 수 없습니다.');
       return;
     }
     setSaving(true);
@@ -159,18 +188,12 @@ export function NightPanel({
         setResult(
           `${target.name} 님을 조사 대상으로 선택했습니다. 결과는 아침에 경찰에게만 공개됩니다.`,
         );
-      } else if (role === 'SPIRITUALIST' && target) {
-        setResult(
-          `${target.name} 님의 진짜 직업은 ${target.role ? ROLE_LABELS[target.role] : '???'} 입니다.`,
-        );
       } else if (role === 'REPORTER' && target) {
-        setResult(
-          `${target.name} 님을 취재했습니다. 실제 직업은 아침 속보로 전원에게 공개됩니다.`,
-        );
+        setResult(`${target.name} 님을 취재 대상으로 선택했습니다.`);
       } else if (role === 'DOCTOR' && target) {
         setResult(
           targetId === me.id
-            ? '자신을 치료 대상으로 선택했습니다. (자힐 · 게임당 1회)'
+            ? '자신을 치료 대상으로 선택했습니다. (자힐 1회)'
             : `${target.name} 님을 치료 대상으로 선택했습니다.`,
         );
       } else if (role === 'MAFIA' && target) {
@@ -179,13 +202,13 @@ export function NightPanel({
             ? `${target.name} 님을 독립 지목했습니다.`
             : `${target.name} 님을 지목했습니다.`,
         );
+      } else if (role === 'SPIRITUALIST' && target) {
+        setResult(`${target.name} 님의 영혼에게 물었습니다.`);
+      } else {
+        setResult('지목이 저장되었습니다.');
       }
     } catch (e) {
-      setResult(
-        e instanceof Error
-          ? e.message
-          : '선택 저장에 실패했습니다. 네트워크를 확인해 주세요.',
-      );
+      setResult(e instanceof Error ? e.message : '저장에 실패했습니다.');
     } finally {
       setSaving(false);
     }
@@ -237,8 +260,10 @@ export function NightPanel({
           selectedId={me.nightTarget}
           onSelect={(id) => void handleSelect(id)}
           disabled={saving}
-          disabledIds={doctorDisabledIds}
-          disabledHints={doctorDisabledHints}
+          disabledIds={
+            new Set([...doctorDisabledIds, ...mafiaDisabledIds])
+          }
+          disabledHints={{ ...doctorDisabledHints, ...mafiaDisabledHints }}
           allyBadgeIds={mafiaAllyIds}
         />
       </div>

@@ -10,6 +10,8 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { getAvatarDef, getAvatarSprite, type AvatarId } from '@/lib/game/avatars';
+import { CharacterImage } from '@/components/play/CharacterImage';
+import { type CharacterState } from '@/lib/characterUtils';
 
 function AvatarFace({
   avatarId,
@@ -17,12 +19,15 @@ function AvatarFace({
   size = 64,
   className = '',
   showLabel = false,
+  state = null,
 }: {
   avatarId: string | null | undefined;
   isAlive?: boolean;
   size?: number;
   className?: string;
   showLabel?: boolean;
+  /** 상태별 개별 이미지를 선택적으로 사용한다. 기본값 null이면 기존 스프라이트를 유지한다. */
+  state?: CharacterState | null;
 }) {
   const def = getAvatarDef(avatarId);
   const sprite = getAvatarSprite(def.id);
@@ -43,17 +48,28 @@ function AvatarFace({
           transform: isAlive ? undefined : 'rotate(-4deg)',
         }}
       >
-        <div
-          aria-hidden="true"
-          className={`absolute inset-0 bg-no-repeat ${
-            isAlive ? '' : 'grayscale brightness-[0.62] saturate-[0.7] opacity-80'
-          }`}
-          style={{
-            backgroundImage: `url(${sprite.src})`,
-            backgroundPosition: sprite.backgroundPosition,
-            backgroundSize: '400% 400%',
-          }}
-        />
+        {state ? (
+          <CharacterImage
+            characterId={def.id}
+            state={state}
+            alt=""
+            className={`absolute inset-0 h-full w-full object-contain ${
+              isAlive ? '' : 'grayscale brightness-[0.62] saturate-[0.7] opacity-80'
+            }`}
+          />
+        ) : (
+          <div
+            aria-hidden="true"
+            className={`absolute inset-0 bg-no-repeat ${
+              isAlive ? '' : 'grayscale brightness-[0.62] saturate-[0.7] opacity-80'
+            }`}
+            style={{
+              backgroundImage: `url(${sprite.src})`,
+              backgroundPosition: sprite.backgroundPosition,
+              backgroundSize: '400% 400%',
+            }}
+          />
+        )}
 
         {!isAlive && (
           <>
@@ -87,6 +103,7 @@ export function CharacterAvatar({
   showLabel = false,
   previewOnHover = false,
   previewSize = 132,
+  state = null,
 }: {
   avatarId: string | null | undefined;
   isAlive?: boolean;
@@ -97,6 +114,7 @@ export function CharacterAvatar({
   /** 호버/포커스 시 큰 미리보기 (캐릭터 선택 UI에서는 끄세요) */
   previewOnHover?: boolean;
   previewSize?: number;
+  state?: CharacterState | null;
 }) {
   const tipId = useId();
   const anchorRef = useRef<HTMLDivElement>(null);
@@ -155,6 +173,7 @@ export function CharacterAvatar({
         isAlive={isAlive}
         size={size}
         showLabel={showLabel}
+        state={state}
       />
       {mounted &&
         previewOnHover &&
@@ -172,6 +191,7 @@ export function CharacterAvatar({
               isAlive={isAlive}
               size={previewSize}
               className="mx-auto"
+              state={state}
             />
           </div>,
           document.body,

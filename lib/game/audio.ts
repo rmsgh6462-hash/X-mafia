@@ -227,13 +227,44 @@ export function speak(text: string) {
 }
 
 /** 아침 결과 팝업의 짧은 효과음. 브라우저 오디오 정책에 막혀도 게임은 계속 진행된다. */
-export async function playMorningEventSound(event: MorningEvent) {
+export async function playMorningEventSound(
+  event: MorningEvent,
+  options: { success?: boolean } = {},
+) {
   if (typeof window === 'undefined') return;
   if (bgmForcedOff) return;
 
   if (event === 'MAFIA_KILL') {
     await playGunshotSound(0.52);
     return;
+  }
+
+  // 의사 허탕은 구조 성공음보다 짧고 가벼운 하강음으로 구분한다.
+  if (event === 'DOCTOR_DEFEND' && options.success !== true) {
+    try {
+      const ctx = await resumeCtx();
+      const now = ctx.currentTime;
+      [
+        { freq: 620, offset: 0, duration: 0.1 },
+        { freq: 430, offset: 0.12, duration: 0.12 },
+        { freq: 250, offset: 0.27, duration: 0.2 },
+      ].forEach(({ freq, offset, duration }) => {
+        const oscillator = ctx.createOscillator();
+        const gain = ctx.createGain();
+        oscillator.type = 'triangle';
+        oscillator.frequency.setValueAtTime(freq, now + offset);
+        gain.gain.setValueAtTime(0.0001, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.035, now + offset + 0.008);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + duration);
+        oscillator.connect(gain);
+        gain.connect(ctx.destination);
+        oscillator.start(now + offset);
+        oscillator.stop(now + offset + duration + 0.02);
+      });
+      return;
+    } catch {
+      // 자동 재생이 차단된 경우에도 시각 연출은 계속 진행한다.
+    }
   }
 
   try {

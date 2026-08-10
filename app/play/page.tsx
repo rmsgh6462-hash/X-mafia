@@ -18,6 +18,7 @@ import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { GhostMode } from '@/components/play/GhostMode';
 import { GameResultPanel } from '@/components/play/GameResultPanel';
 import { MatchChatPanel } from '@/components/play/MatchChatPanel';
+import { MafiaChatPanel } from '@/components/play/MafiaChatPanel';
 import {
   getActiveMorningEvents,
   getMorningEvents,
@@ -30,6 +31,7 @@ import {
 import { PlayerRoster } from '@/components/play/PlayerRoster';
 import { Popup } from '@/components/play/Popup';
 import { RoleCard } from '@/components/play/RoleCard';
+import { VoteResultModal } from '@/components/play/VoteResultModal';
 import {
   isAvatarId,
   playerGenderFromAvatarId,
@@ -469,7 +471,7 @@ function PlayPageInner() {
           </label>
 
           {lobbyRoom && (
-            <PlayerRoster room={lobbyRoom} compact title="이미 입장한 친구" />
+            <PlayerRoster room={lobbyRoom} compact title="이미 입장한 친구" collapsible />
           )}
 
           <label className="block">
@@ -632,6 +634,8 @@ function PlayPageInner() {
             currentPlayerId={me.id}
             round={room.currentRound}
             maxRounds={room.maxRounds}
+            voteEliminatedPlayerId={room.dayVoteResult?.eliminatedPlayerId}
+            mafiaEliminatedPlayerIds={room.nightResults?.deadPlayerIds}
           />
         ) : (
           <>
@@ -640,7 +644,16 @@ function PlayPageInner() {
               highlightId={me.id}
               compact
               viewer={me}
+              collapsible
+              defaultCollapsed
             />
+
+            {me.isAlive &&
+              me.role === 'MAFIA' &&
+              room.gameState !== 'WAITING' &&
+              room.mafiaChatEnabled !== false && (
+                <MafiaChatPanel room={room} me={me} pin={session.pin} />
+              )}
 
             {isGhost ? (
               <GhostMode room={room} me={me} pin={session.pin} />
@@ -674,6 +687,8 @@ function PlayPageInner() {
                   </div>
                   <RoleCard
                     role={me.role}
+                    avatarId={me.avatarId}
+                    isAlive={me.isAlive}
                     nightQuiz={room.nightQuizState}
                     mafiaMission={room.mafiaMissionState}
                     mafiaAllies={mafiaAllies}
@@ -805,22 +820,17 @@ function PlayPageInner() {
         )}
       </Popup>
 
-      <Popup
-        open={voteDeathOpen && Boolean(room.dayVoteResult?.announcement)}
-        title="투표 탈락 공지"
-        accent="red"
+      <VoteResultModal
+        open={voteDeathOpen}
+        result={room.dayVoteResult}
+        eliminatedPlayer={
+          room.dayVoteResult?.eliminatedPlayerId
+            ? room.players[room.dayVoteResult.eliminatedPlayerId]
+            : null
+        }
+        revealRoles={room.revealDeathRoles !== false}
         onClose={() => setVoteDeathOpen(false)}
-      >
-        <p className="text-base font-bold leading-snug">
-          {room.dayVoteResult?.announcement}
-        </p>
-        {room.dayVoteResult?.eliminatedRole &&
-          room.revealDeathRoles !== false && (
-            <p className="mt-3 text-center text-sm font-black text-amber-200">
-              직업: {ROLE_LABELS[room.dayVoteResult.eliminatedRole]}
-            </p>
-          )}
-      </Popup>
+      />
 
       <Popup
         open={alertOpen}

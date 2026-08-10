@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { RotateCcw, Sparkles, Trash2, Trophy, Users } from 'lucide-react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
+import { getCharacterStateForRole, type CharacterState } from '@/lib/characterUtils';
 import { playVictorySound } from '@/lib/utils/sound';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import type { Player, WinnerSide } from '@/types/game';
@@ -18,6 +19,8 @@ type GameResultPanelProps = {
   busy?: boolean;
   onRestart?: () => void;
   onNewGame?: () => void;
+  voteEliminatedPlayerId?: string | null;
+  mafiaEliminatedPlayerIds?: string[];
 };
 
 export function GameResultPanel({
@@ -30,6 +33,8 @@ export function GameResultPanel({
   busy = false,
   onRestart,
   onNewGame,
+  voteEliminatedPlayerId = null,
+  mafiaEliminatedPlayerIds = [],
 }: GameResultPanelProps) {
   const mafiaWon = winnerSide === 'MAFIA';
   const citizenWon = winnerSide === 'CITIZEN';
@@ -71,6 +76,12 @@ export function GameResultPanel({
   );
   const livingPlayers = allPlayers.filter((player) => player.isAlive);
   const eliminatedPlayers = allPlayers.filter((player) => !player.isAlive);
+  const stateForPlayer = (player: Player): CharacterState => {
+    if (player.isAlive) return getCharacterStateForRole(player.role);
+    if (player.id === voteEliminatedPlayerId) return 'arrested';
+    if (mafiaEliminatedPlayerIds.includes(player.id)) return 'dead';
+    return 'dead';
+  };
 
   return (
     <motion.section
@@ -141,6 +152,7 @@ export function GameResultPanel({
             currentPlayerId={currentPlayerId}
             emptyLabel="생존자가 없습니다."
             tone={citizenWon ? 'safe' : 'neutral'}
+            stateForPlayer={stateForPlayer}
           />
           <ResultRoster
             title="탈락자 · 직업 공개"
@@ -148,6 +160,7 @@ export function GameResultPanel({
             currentPlayerId={currentPlayerId}
             emptyLabel="탈락자가 없습니다."
             tone="danger"
+            stateForPlayer={stateForPlayer}
           />
         </div>
 
@@ -188,12 +201,14 @@ function ResultRoster({
   currentPlayerId,
   emptyLabel,
   tone,
+  stateForPlayer,
 }: {
   title: string;
   players: Player[];
   currentPlayerId?: string | null;
   emptyLabel: string;
   tone: 'safe' | 'danger' | 'neutral';
+  stateForPlayer: (player: Player) => CharacterState;
 }) {
   const toneClass = {
     safe: 'border-emerald-300/25 bg-emerald-950/35',
@@ -221,6 +236,7 @@ function ResultRoster({
                 <CharacterAvatar
                   avatarId={player.avatarId}
                   isAlive={player.isAlive}
+                  state={stateForPlayer(player)}
                   size={42}
                 />
                 <span className="min-w-0">

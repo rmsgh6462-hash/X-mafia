@@ -6,6 +6,7 @@ export {
   MorningSequenceModal,
   MorningResultPopup,
   getActiveMorningEvents,
+  getDoctorRescueImage,
   getMorningEvents,
 } from '@/components/play/MorningResultPopup';
 export { MorningReporterNews } from '@/components/play/MorningReporterNews';

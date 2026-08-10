@@ -65,6 +65,15 @@ export interface GhostChatMessage {
   createdAt?: number;
 }
 
+/** 마피아 비밀 채팅 — rooms/{roomId}/mafiaChat/{messageId} */
+export interface MafiaChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  timestamp: number;
+}
+
 /** 1:1 매칭 채팅 메시지 */
 export interface MatchChatMessage {
   id: string;
@@ -254,6 +263,11 @@ export interface GameRoom {
 
   /** 밤 전원 퀴즈 */
   nightQuizState: NightQuizState | null;
+  /**
+   * 교사가 낮/투표 중에 미리 저장한 밤 미션 설정.
+   * 투표 종료 후 밤으로 넘어갈 때 이 설정으로 퀴즈가 시작된다.
+   */
+  pendingNightQuizConfig: NightQuizConfig | null;
   /** 마피아 미션 (교사 부여) */
   mafiaMissionState: MafiaMissionState | null;
   /** 마피아 미션 성공 → 다음 밤 멀티킬 예약 */
@@ -282,6 +296,13 @@ export interface GameRoom {
   voteTieResolution: VoteTieResolution;
   /** 탈락자 직업 즉시 공개 (ON=공개, OFF=탈락만 안내) */
   revealDeathRoles: boolean;
+  /**
+   * 마피아가 다른 마피아를 밤 지목할 수 있는지.
+   * false면 동료 마피아는 선택 불가.
+   */
+  allowMafiaTargetMafia: boolean;
+  /** 생존 마피아 비밀 채팅 사용 허용 (교사는 끄더라도 기존 대화 열람 가능) */
+  mafiaChatEnabled: boolean;
   /** 총 진행 라운드 수 (기본: 마피아 수 × 3) */
   maxRounds: number;
   /** 현재 라운드 (밤 시작 시 증가, 0=시작 전) */
@@ -295,6 +316,8 @@ export interface GameRoom {
   dayVoteResult: DayVoteResult | null;
   createdAt: number;
   ghostChat: Record<string, GhostChatMessage>;
+  /** 생존 마피아 전용 비밀 채팅 (교사는 모니터로 열람) */
+  mafiaChat: Record<string, MafiaChatMessage>;
   matchChats: Record<string, Record<string, MatchChatMessage>>;
   matchChatHistory: Record<string, MatchChatRound>;
   ghostPredictions: Record<string, WinnerSide>;

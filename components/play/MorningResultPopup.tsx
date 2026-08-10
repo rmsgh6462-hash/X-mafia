@@ -162,12 +162,15 @@ export function MorningSequenceModal({
 
   const currentEvent = sequence[eventIndex] ?? null;
   const currentType = currentEvent?.event ?? null;
+  const currentSuccess = currentEvent?.success;
   const isMafiaKill = currentType === 'MAFIA_KILL';
   useEffect(() => {
     if (!open || !currentType) return;
     // 특보 단계의 셔터·타자기 효과음은 신문 컴포넌트가 등장할 때 재생한다.
     if (currentType !== 'REPORTER_NEWS') {
-      void playMorningEventSound(currentType).catch(() => {
+      void playMorningEventSound(currentType, {
+        success: currentSuccess,
+      }).catch(() => {
         /* 오디오 실패는 연출을 막지 않는다 */
       });
     }
@@ -180,7 +183,7 @@ export function MorningSequenceModal({
       }
     }, 2400);
     return () => window.clearTimeout(timer);
-  }, [open, currentType, eventIndex, sequence.length]);
+  }, [open, currentType, currentSuccess, eventIndex, sequence.length]);
 
   // open 이어도 큐/결과가 없으면 렌더하지 않음 (훅 이후 early return)
   if (!open || !currentEvent || !result) return null;
@@ -267,15 +270,24 @@ export function MorningSequenceModal({
                 hasNext={!lastEvent}
               />
             )}
-            {currentType === 'DOCTOR_DEFEND' && (
-              <DoctorDefendPanel
-                event={currentEvent}
-                players={players}
-                onClose={closePopup}
-                onNext={nextOrClose}
-                hasNext={!lastEvent}
-              />
-            )}
+            {currentType === 'DOCTOR_DEFEND' &&
+              (currentEvent.success === true ? (
+                <DoctorDefendPanel
+                  event={currentEvent}
+                  players={players}
+                  onClose={closePopup}
+                  onNext={nextOrClose}
+                  hasNext={!lastEvent}
+                />
+              ) : (
+                <DoctorFailPanel
+                  event={currentEvent}
+                  players={players}
+                  onClose={closePopup}
+                  onNext={nextOrClose}
+                  hasNext={!lastEvent}
+                />
+              ))}
           </motion.div>
           <button
             type="button"
@@ -376,6 +388,7 @@ function MafiaKillPanel({
             <CharacterAvatar
               avatarId={displayAvatarId}
               isAlive={!wasKilled}
+              state={wasKilled ? 'dead' : null}
               size={108}
               className="relative z-10"
             />
@@ -506,6 +519,70 @@ function DoctorDefendPanel({
           Medical Rescue Complete
           <HeartPulse className="h-3 w-3" />
         </div>
+      </div>
+      <PopupActions
+        onClose={onClose}
+        onNext={onNext}
+        hasNext={hasNext}
+        tone="safe"
+      />
+    </motion.section>
+  );
+}
+
+function DoctorFailPanel({
+  event,
+  players,
+  onClose,
+  onNext,
+  hasNext,
+}: {
+  event: ActiveMorningEvent;
+  players: Record<string, Player>;
+  onClose: () => void;
+  onNext: () => void;
+  hasNext: boolean;
+}) {
+  const targetPlayer = event.targetId ? players[event.targetId] : null;
+  const doctorPlayer = event.actorId ? players[event.actorId] : null;
+  const displayPlayer = doctorPlayer ?? targetPlayer;
+  const targetName = event.targetName ?? targetPlayer?.name ?? '학생';
+  const doctorName = doctorPlayer?.name ?? '의사';
+
+  return (
+    <motion.section
+      className="overflow-hidden rounded-2xl border border-amber-200/30 bg-slate-950/95 text-white shadow-2xl shadow-violet-950/70"
+      initial={{ opacity: 0, rotate: -1.5, scale: 0.96 }}
+      animate={{ opacity: 1, rotate: 0, scale: 1 }}
+    >
+      <div className="relative flex h-64 flex-col items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_50%_35%,rgba(124,58,237,0.42),rgba(15,23,42,0.98)_68%)]">
+        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(115deg,transparent_20%,rgba(251,191,36,0.12)_48%,transparent_72%)]" />
+        <div className="absolute inset-x-3 top-4 flex items-center justify-center gap-2 text-xs font-black uppercase tracking-[0.25em] text-amber-200 sm:text-sm">
+          <HeartPulse className="h-4 w-4" />
+          Doctor Mission Failed
+          <HeartPulse className="h-4 w-4" />
+        </div>
+        <CharacterAvatar
+          avatarId={displayPlayer?.avatarId}
+          isAlive
+          state="doctor_fail"
+          size={126}
+          className="relative z-10 mt-6 ring-4 ring-amber-200/40 shadow-[0_0_28px_rgba(251,191,36,0.35)]"
+        />
+        <div className="relative z-10 mt-3 rounded-full border border-amber-100/45 bg-slate-950/70 px-4 py-1.5 text-sm font-black text-amber-100">
+          {doctorName}의 치료 작전
+        </div>
+      </div>
+      <div className="px-5 py-5 text-center">
+        <h2 id="morning-result-title" className="text-2xl font-black text-amber-100">
+          의사의 허탕!
+        </h2>
+        <p className="mt-3 text-sm font-bold leading-relaxed text-violet-100/85">
+          의사가 밤새 분주히 움직였지만, 아무도 구하지 못했습니다...
+        </p>
+        <p className="mt-3 rounded-xl bg-white/5 px-4 py-3 text-xs font-black text-amber-100/80 ring-1 ring-amber-200/15">
+          치료 대상: {targetName}
+        </p>
       </div>
       <PopupActions
         onClose={onClose}

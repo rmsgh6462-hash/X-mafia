@@ -8,7 +8,6 @@ import {
   HeartPulse,
   Monitor,
   Moon,
-  Newspaper,
   Radio,
   ShieldCheck,
   Skull,
@@ -23,11 +22,14 @@ import {
 import GameBackground, { type BackgroundPhase } from '@/components/GameBackground';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import {
+  getDoctorRescueImage,
   getActiveMorningEvents,
   getMorningEvents,
 } from '@/components/play/MorningSequenceModal';
 import { isFirebaseConfigured } from '@/lib/firebase';
 import { playerGenderFromAvatarId } from '@/lib/game/avatars';
+import { getCharacterStateForRole } from '@/lib/characterUtils';
+import { playMorningEventSound } from '@/lib/game/audio';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import { playerList, subscribeRoom } from '@/lib/game/room';
 import type {
@@ -105,6 +107,17 @@ function toPublicRoom(source: GameRoom): GameRoom {
       }
     : null;
 
+  const publicDayVoteResult = source.dayVoteResult
+    ? {
+        ...source.dayVoteResult,
+        eliminatedRole:
+          source.revealDeathRoles !== false
+            ? source.dayVoteResult.eliminatedRole ?? null
+            : null,
+        ballots: undefined,
+      }
+    : null;
+
   const publicQuiz = source.nightQuizState
     ? {
         ...source.nightQuizState,
@@ -121,6 +134,7 @@ function toPublicRoom(source: GameRoom): GameRoom {
     ...source,
     players: publicPlayers,
     nightQuizState: publicQuiz,
+    pendingNightQuizConfig: null,
     mafiaMissionState: null,
     pendingMafiaNightBuff: false,
     isMafiaBuffActive: false,
@@ -133,12 +147,13 @@ function toPublicRoom(source: GameRoom): GameRoom {
     nightResults: publicNightResults,
     votes: {},
     voteRevoteCandidates: null,
-    dayVoteResult: null,
-    revealDeathRoles: false,
+    dayVoteResult: publicDayVoteResult,
+    revealDeathRoles: source.revealDeathRoles !== false,
     ghostChat: {},
     matchChats: {},
     matchChatHistory: {},
     ghostPredictions: {},
+    mafiaChat: {},
   };
 }
 
@@ -202,9 +217,7 @@ function phaseDescription(room: GameRoom): string {
     case 'DAY_VOTE':
       return '마피아라고 생각되는 학생을 신중하게 선택하세요.';
     case 'NIGHT':
-      return room.nightQuizState?.active
-        ? '밤 퀴즈를 풀고, 해당 직업은 능력을 사용하세요.'
-        : '마을이 잠들었습니다. 밤의 행동이 진행 중입니다.';
+      return '마을이 잠들었습니다. 자기 자리로 돌아가 밤의 행동을 해주세요.';
     case 'RESULT':
       return '지난밤의 결과를 모두 함께 확인합니다.';
     case 'ENDED':
@@ -282,9 +295,11 @@ function PublicStage({ room, now }: { room: GameRoom; now: number }) {
 function PublicMorningEvent({
   event,
   room,
+  avatarSize,
 }: {
   event: ActiveMorningEvent;
   room: GameRoom;
+  avatarSize: number;
 }) {
   const target = event.targetId ? room.players[event.targetId] : null;
   const targetName = event.targetName ?? target?.name ?? '학생';
@@ -307,7 +322,8 @@ function PublicMorningEvent({
             <CharacterAvatar
               avatarId={target?.avatarId}
               isAlive={!wasKilled}
-              size={140}
+              state={wasKilled ? 'dead' : null}
+              size={avatarSize}
               className="relative z-10"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-red-950/20" />
@@ -337,23 +353,89 @@ function PublicMorningEvent({
     );
   }
 
+  if (event.event === 'DOCTOR_DEFEND' && event.success !== true) {
+    const failurePlayer = event.actorId ? room.players[event.actorId] : target;
+
+    return (
+      <motion.section
+        key="public-doctor-fail"
+        initial={{ opacity: 0, scale: 0.9, y: 24 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="relative min-h-[58vh] w-full max-w-7xl overflow-hidden rounded-[2rem] border border-amber-200/30 bg-slate-950/90 text-white shadow-2xl shadow-violet-950/70"
+      >
+        <div className="absolute inset-x-0 top-0 h-2 bg-gradient-to-r from-violet-400 via-amber-200 to-violet-400" />
+        <div className="relative grid min-h-[58vh] items-center gap-8 p-5 sm:p-8 lg:grid-cols-[1.15fr_1fr] lg:p-12">
+          <div className="relative flex min-h-[50vh] items-center justify-center overflow-hidden rounded-3xl bg-[radial-gradient(circle_at_50%_35%,rgba(124,58,237,0.42),rgba(15,23,42,0.98)_68%)] shadow-2xl shadow-violet-950/60">
+            <motion.div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 bg-[linear-gradient(115deg,transparent_20%,rgba(251,191,36,0.16)_48%,transparent_72%)]"
+              animate={{ x: ['-18%', '18%', '-18%'] }}
+              transition={{ duration: 3.2, repeat: Infinity, ease: 'easeInOut' }}
+            />
+            <Sparkles className="absolute left-[18%] top-[18%] h-12 w-12 text-amber-200/70 animate-pulse" />
+            <Sparkles className="absolute bottom-[20%] right-[18%] h-9 w-9 text-violet-200/65 animate-pulse" />
+            <CharacterAvatar
+              avatarId={failurePlayer?.avatarId}
+              isAlive
+              state="doctor_fail"
+              size={avatarSize}
+              className="relative z-10 ring-8 ring-amber-200/30 shadow-[0_0_42px_rgba(251,191,36,0.3)]"
+            />
+          </div>
+          <div className="text-center lg:text-left">
+            <div className="flex items-center justify-center gap-3 text-sm font-black uppercase tracking-[0.3em] text-amber-200 lg:justify-start sm:text-lg">
+              <HeartPulse className="h-7 w-7 animate-pulse" />
+              Doctor Mission Failed
+            </div>
+            <h1 className="mt-6 text-balance text-4xl font-black leading-tight text-amber-50 sm:text-6xl">
+              의사의 허탕!
+            </h1>
+            <p className="mt-5 text-lg font-bold leading-relaxed text-violet-100/85 sm:text-2xl">
+              의사가 밤새 분주히 움직였지만, 아무도 구하지 못했습니다...
+            </p>
+            <p className="mt-5 inline-flex items-center gap-2 rounded-full bg-black/30 px-5 py-3 text-base font-black text-amber-100 ring-1 ring-amber-200/25 sm:text-xl">
+              <HeartPulse className="h-5 w-5" />
+              치료 대상: {targetName}
+            </p>
+          </div>
+        </div>
+      </motion.section>
+    );
+  }
+
   if (event.event === 'DOCTOR_DEFEND') {
     return (
       <motion.section
         key="public-doctor-defend"
         initial={{ opacity: 0, scale: 0.9, y: 24 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="relative w-full max-w-6xl overflow-hidden rounded-[2rem] border border-emerald-300/35 bg-emerald-950/80 text-white shadow-2xl shadow-emerald-950/60"
+        className="relative min-h-[58vh] w-full max-w-7xl overflow-hidden rounded-[2rem] border border-emerald-300/35 bg-emerald-950/80 text-white shadow-2xl shadow-emerald-950/60"
       >
         <div className="absolute inset-x-0 top-0 h-2 bg-gradient-to-r from-cyan-300 via-emerald-200 to-cyan-300" />
-        <div className="relative grid items-center gap-8 p-6 sm:p-10 lg:grid-cols-[1.3fr_1fr] lg:p-14">
-          <div className="relative flex h-64 items-center justify-center overflow-hidden rounded-3xl bg-[radial-gradient(circle_at_50%_30%,rgba(16,185,129,0.35),rgba(6,78,59,0.95)_65%)] shadow-2xl shadow-emerald-950/60 sm:h-[25rem]">
-            <CharacterAvatar
-              avatarId={target?.avatarId}
-              isAlive
-              size={140}
-              className="relative z-10 ring-4 ring-emerald-300/45"
+        <div className="relative grid min-h-[58vh] items-center gap-8 p-5 sm:p-8 lg:grid-cols-[1.35fr_1fr] lg:p-12">
+          <div className="relative flex min-h-[50vh] items-center justify-center overflow-hidden rounded-3xl bg-[radial-gradient(circle_at_50%_30%,rgba(16,185,129,0.35),rgba(6,78,59,0.95)_65%)] shadow-2xl shadow-emerald-950/60">
+            {/* 성별별 마을 구조 장면을 메인 비주얼로 사용한다. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={getDoctorRescueImage(targetGender)}
+              alt={`${targetGender === 'girl' ? '여학생' : '남학생'} 구조 장면`}
+              className="absolute inset-0 h-full w-full object-cover"
+              decoding="async"
+              draggable={false}
             />
+            <div className="absolute inset-0 bg-gradient-to-t from-emerald-950/90 via-emerald-950/15 to-emerald-950/10" />
+            <div className="absolute left-5 top-5 rounded-full bg-emerald-950/75 px-4 py-2 text-sm font-black text-emerald-100 ring-1 ring-emerald-200/40 sm:text-lg">
+              {targetGender === 'girl' ? '여학생 구조' : '남학생 구조'}
+            </div>
+            <div className="absolute bottom-5 left-1/2 -translate-x-1/2 rounded-2xl bg-emerald-950/75 p-2 ring-2 ring-emerald-200/45 shadow-2xl">
+              <CharacterAvatar
+                avatarId={target?.avatarId}
+                isAlive
+                state={null}
+                size={Math.max(150, Math.round(avatarSize * 0.46))}
+                className="relative z-10"
+              />
+            </div>
             <div className="absolute bottom-6 rounded-full border border-emerald-100/50 bg-emerald-950/60 p-3 text-emerald-100">
               <HeartPulse className="h-8 w-8" strokeWidth={1.8} />
             </div>
@@ -387,7 +469,7 @@ function PublicMorningEvent({
       key="public-reporter-news"
       initial={{ opacity: 0, y: -24, rotate: -1.5, scale: 0.94 }}
       animate={{ opacity: 1, y: 0, rotate: 0, scale: 1 }}
-      className="relative w-full max-w-5xl overflow-hidden rounded-[0.5rem] border-[8px] border-[#6f211b] bg-[#ead9b7] text-[#2b2017] shadow-2xl shadow-black/70"
+        className="relative min-h-[58vh] w-full max-w-7xl overflow-hidden rounded-[0.5rem] border-[8px] border-[#6f211b] bg-[#ead9b7] text-[#2b2017] shadow-2xl shadow-black/70"
     >
       <motion.div
         aria-hidden="true"
@@ -407,7 +489,7 @@ function PublicMorningEvent({
           <Radio className="h-6 w-6 animate-pulse" />
         </p>
       </div>
-      <div className="relative px-6 py-8 text-center sm:px-12 sm:py-12">
+        <div className="relative px-6 py-8 text-center sm:px-12 sm:py-12 lg:py-14">
         <p className="text-sm font-black uppercase tracking-[0.3em] text-[#8d2b20] sm:text-lg">
           REPORTER&apos;S EXCLUSIVE · 전원 공개
         </p>
@@ -419,7 +501,8 @@ function PublicMorningEvent({
             <CharacterAvatar
               avatarId={target?.avatarId}
               isAlive
-              size={160}
+              state={getCharacterStateForRole(reporterRole)}
+              size={Math.max(220, Math.round(avatarSize * 0.56))}
               className="mx-auto"
             />
           </div>
@@ -458,6 +541,84 @@ function PublicEliminatedStrip({ room }: { room: GameRoom }) {
         ))}
       </div>
     </section>
+  );
+}
+
+function PublicVoteResult({
+  room,
+  avatarSize,
+}: {
+  room: GameRoom;
+  avatarSize: number;
+}) {
+  const result = room.dayVoteResult;
+  if (!result) return null;
+
+  const eliminated = result.eliminatedPlayerId
+    ? room.players[result.eliminatedPlayerId]
+    : null;
+  const roleLabel =
+    room.revealDeathRoles !== false && result.eliminatedRole
+      ? ROLE_LABELS[result.eliminatedRole]
+      : null;
+
+  return (
+    <motion.section
+      key={`vote-result-${result.resolvedAt}`}
+      initial={{ opacity: 0, scale: 0.9, y: 24 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      className="relative min-h-[58vh] w-full max-w-7xl overflow-hidden rounded-[2rem] border border-amber-300/45 bg-[#130b18]/95 text-white shadow-2xl shadow-black/70"
+    >
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_38%,rgba(245,158,11,0.22),transparent_42%),linear-gradient(115deg,rgba(127,29,29,0.55),transparent_45%,rgba(30,27,75,0.7))]" />
+      <div className="pointer-events-none absolute inset-0 opacity-35 [background-image:repeating-linear-gradient(90deg,transparent_0,transparent_10%,rgba(248,113,113,0.3)_10.3%,transparent_10.7%,transparent_20%)]" />
+      <div className="relative grid min-h-[58vh] items-center gap-8 p-6 sm:p-10 lg:grid-cols-[1.2fr_1fr] lg:p-14">
+        <div className="relative flex min-h-[50vh] items-center justify-center overflow-hidden rounded-3xl border border-amber-200/25 bg-[radial-gradient(circle_at_50%_38%,rgba(180,83,9,0.48),rgba(15,23,42,0.94)_70%)] shadow-2xl shadow-black/60">
+          <div className="pointer-events-none absolute inset-0 opacity-55 [background-image:repeating-linear-gradient(90deg,transparent_0,transparent_13%,rgba(226,232,240,0.22)_13.5%,rgba(226,232,240,0.22)_14%,transparent_14.5%,transparent_27%)]" />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/75 to-transparent" />
+          {eliminated ? (
+            <CharacterAvatar
+              avatarId={eliminated.avatarId}
+              isAlive={false}
+              state="arrested"
+              size={avatarSize}
+              className="relative z-10"
+            />
+          ) : (
+            <Skull className="relative z-10 h-40 w-40 text-amber-200/75 sm:h-56 sm:w-56" />
+          )}
+          <div className="absolute bottom-5 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/75 px-5 py-2 text-lg font-black text-amber-100 ring-1 ring-amber-200/35 sm:text-2xl">
+            {eliminated?.name ?? '체포된 학생 없음'}
+          </div>
+        </div>
+
+        <div className="relative text-center lg:text-left">
+          <div className="flex items-center justify-center gap-3 text-sm font-black uppercase tracking-[0.3em] text-amber-200 lg:justify-start sm:text-lg">
+            <Radio className="h-7 w-7 animate-pulse" />
+            Vote Result · Arrest Alert
+            <Radio className="h-7 w-7 animate-pulse" />
+          </div>
+          <h1 className="mt-6 text-balance text-5xl font-black leading-tight text-amber-50 sm:text-7xl">
+            {eliminated ? '투표 체포 결과' : '투표 결과 발표'}
+          </h1>
+          <p className="mt-6 text-2xl font-black leading-relaxed text-white sm:text-4xl">
+            {result.announcement ??
+              (eliminated
+                ? `${eliminated.name} 님이 투표로 체포되었습니다.`
+                : '이번 투표에서 체포된 학생은 없습니다.')}
+          </p>
+          {roleLabel && (
+            <p className="mt-6 inline-flex rounded-full bg-amber-300 px-5 py-2 text-xl font-black text-stone-950 shadow-lg shadow-amber-950/35 sm:text-2xl">
+              공개 직업: {roleLabel}
+            </p>
+          )}
+          {result.wasTie && (
+            <p className="mt-5 text-base font-bold text-amber-100/75 sm:text-xl">
+              동률 처리 결과가 반영되었습니다.
+            </p>
+          )}
+        </div>
+      </div>
+    </motion.section>
   );
 }
 
@@ -514,17 +675,23 @@ export default function HostDisplayPage() {
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [morningIndex, setMorningIndex] = useState(0);
+  const [displayAvatarSize, setDisplayAvatarSize] = useState(520);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setRoomId(params.get('roomId') ?? params.get('pin') ?? '');
+    const nextRoomId = params.get('roomId') ?? params.get('pin') ?? '';
+    const timer = window.setTimeout(() => setRoomId(nextRoomId), 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
     if (!roomId) return;
     if (!isFirebaseConfigured()) {
-      setError('Firebase가 설정되지 않아 실시간 디스플레이를 연결할 수 없습니다.');
-      return;
+      const timer = window.setTimeout(
+        () => setError('Firebase가 설정되지 않아 실시간 디스플레이를 연결할 수 없습니다.'),
+        0,
+      );
+      return () => window.clearTimeout(timer);
     }
     let unsubscribe: (() => void) | undefined;
     try {
@@ -538,7 +705,11 @@ export default function HostDisplayPage() {
         }
       });
     } catch {
-      setError('Firebase 실시간 연결에 실패했습니다.');
+      const timer = window.setTimeout(
+        () => setError('Firebase 실시간 연결에 실패했습니다.'),
+        0,
+      );
+      return () => window.clearTimeout(timer);
     }
     return () => unsubscribe?.();
   }, [roomId]);
@@ -546,6 +717,17 @@ export default function HostDisplayPage() {
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const updateAvatarSize = () => {
+      setDisplayAvatarSize(
+        Math.max(320, Math.min(640, Math.floor(window.innerHeight * 0.52))),
+      );
+    };
+    updateAvatarSize();
+    window.addEventListener('resize', updateAvatarSize);
+    return () => window.removeEventListener('resize', updateAvatarSize);
   }, []);
 
   const morningEvents = useMemo(
@@ -557,16 +739,24 @@ export default function HostDisplayPage() {
       room?.roomId,
       room?.currentRound,
       room?.gameState,
-      morningEvents.map((event) => `${event.event}:${event.targetId ?? ''}`).join(','),
+      morningEvents
+        .map((event) => `${event.event}:${event.targetId ?? ''}:${event.success ?? ''}`)
+        .join(','),
       (room?.nightResults?.deadPlayerIds ?? []).join(','),
     ].join('|'),
     [morningEvents, room?.currentRound, room?.gameState, room?.nightResults?.deadPlayerIds, room?.roomId],
   );
   const currentMorningEvent = morningEvents[morningIndex] ?? null;
   const showMorningSequence = room?.gameState === 'RESULT' && Boolean(currentMorningEvent);
+  const showVoteResult = Boolean(
+    room?.dayVoteResult &&
+      room.gameState !== 'RESULT' &&
+      room.gameState !== 'ENDED',
+  );
 
   useEffect(() => {
-    setMorningIndex(0);
+    const timer = window.setTimeout(() => setMorningIndex(0), 0);
+    return () => window.clearTimeout(timer);
   }, [morningKey]);
 
   useEffect(() => {
@@ -576,6 +766,15 @@ export default function HostDisplayPage() {
     }, 2600);
     return () => window.clearTimeout(timer);
   }, [currentMorningEvent, morningEvents.length, morningIndex, morningKey, room?.gameState]);
+
+  useEffect(() => {
+    if (!showMorningSequence || !currentMorningEvent) return;
+    void playMorningEventSound(currentMorningEvent.event, {
+      success: currentMorningEvent.success,
+    }).catch(() => {
+      // 자동 재생이 차단되어도 서브모니터의 시각 연출은 계속 진행한다.
+    });
+  }, [currentMorningEvent, showMorningSequence]);
 
   const phase = toBackgroundPhase(room?.gameState);
 
@@ -620,7 +819,20 @@ export default function HostDisplayPage() {
             <PublicVictoryDisplay room={room} />
           ) : room && showMorningSequence && currentMorningEvent ? (
             <AnimatePresence mode="wait">
-              <PublicMorningEvent key={`${currentMorningEvent.event}-${morningIndex}`} event={currentMorningEvent} room={room} />
+              <PublicMorningEvent
+                key={`${currentMorningEvent.event}-${morningIndex}`}
+                event={currentMorningEvent}
+                room={room}
+                avatarSize={displayAvatarSize}
+              />
+            </AnimatePresence>
+          ) : room && showVoteResult ? (
+            <AnimatePresence mode="wait">
+              <PublicVoteResult
+                key={`vote-result-${room.dayVoteResult?.resolvedAt ?? 'pending'}`}
+                room={room}
+                avatarSize={displayAvatarSize}
+              />
             </AnimatePresence>
           ) : room ? (
             <PublicStage room={room} now={now} />

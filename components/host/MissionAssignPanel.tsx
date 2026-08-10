@@ -21,40 +21,88 @@ import type {
   NightQuizConfig,
 } from '@/types/game';
 
-/** 밤 시작 전: 퀴즈 모드·학년·힌트·제한시간 + 출제 미리보기 */
+/** 밤 시작 전: 퀴즈 모드·학년·힌트·제한시간 + 출제 미리보기 (저장) */
 export function NightQuizConfigForm({
   busy,
-  onStart,
+  onSave,
   onCancel,
   pendingBuff,
+  initialConfig,
 }: {
   busy?: boolean;
   pendingBuff?: boolean;
-  onStart: (config: NightQuizConfig) => void;
+  initialConfig?: NightQuizConfig | null;
+  onSave: (config: NightQuizConfig) => void;
   onCancel?: () => void;
 }) {
-  const [mode, setMode] = useState<QuizMode>('MATH');
-  const [grade, setGrade] = useState<ElementaryGrade>(3);
-  const [timeLimitSec, setTimeLimitSec] = useState(45);
-  const [threshold, setThreshold] = useState(70);
+  const seed = initialConfig ?? null;
+  const [mode, setMode] = useState<QuizMode>(seed?.mode ?? 'MATH');
+  const [grade, setGrade] = useState<ElementaryGrade>(
+    (seed?.grade === 1 ||
+    seed?.grade === 2 ||
+    seed?.grade === 3 ||
+    seed?.grade === 4 ||
+    seed?.grade === 5 ||
+    seed?.grade === 6
+      ? seed.grade
+      : 3) as ElementaryGrade,
+  );
+  const [timeLimitSec, setTimeLimitSec] = useState(seed?.timeLimitSec ?? 45);
+  const [threshold, setThreshold] = useState(
+    seed?.successThresholdPercent ?? 70,
+  );
   const [hint, setHint] = useState(
-    '마피아 중 한 명은 오늘 평소보다 말이 적을 수 있습니다.',
+    seed?.successHint?.trim() ||
+      '마피아 중 한 명은 오늘 평소보다 말이 적을 수 있습니다.',
   );
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const [customQ, setCustomQ] = useState('');
-  const [c0, setC0] = useState('');
-  const [c1, setC1] = useState('');
-  const [c2, setC2] = useState('');
-  const [c3, setC3] = useState('');
-  const [correctIndex, setCorrectIndex] = useState(0);
+  const [customQ, setCustomQ] = useState(
+    seed?.mode === 'CUSTOM' ? seed.question : '',
+  );
+  const [c0, setC0] = useState(
+    seed?.mode === 'CUSTOM' ? (seed.choices[0] ?? '') : '',
+  );
+  const [c1, setC1] = useState(
+    seed?.mode === 'CUSTOM' ? (seed.choices[1] ?? '') : '',
+  );
+  const [c2, setC2] = useState(
+    seed?.mode === 'CUSTOM' ? (seed.choices[2] ?? '') : '',
+  );
+  const [c3, setC3] = useState(
+    seed?.mode === 'CUSTOM' ? (seed.choices[3] ?? '') : '',
+  );
+  const [correctIndex, setCorrectIndex] = useState(
+    seed?.mode === 'CUSTOM' ? seed.correctIndex : 0,
+  );
 
   const lockedQuiz: GeneratedQuiz | null = useMemo(() => {
     if (mode === 'CUSTOM') return null;
+    if (
+      refreshKey === 0 &&
+      seed &&
+      seed.mode === mode &&
+      seed.question &&
+      Array.isArray(seed.choices) &&
+      seed.choices.length >= 4 &&
+      (mode !== 'MATH' || (seed.grade ?? null) === grade)
+    ) {
+      return {
+        question: seed.question,
+        answer: seed.answer,
+        choices: [
+          seed.choices[0] ?? '',
+          seed.choices[1] ?? '',
+          seed.choices[2] ?? '',
+          seed.choices[3] ?? '',
+        ] as [string, string, string, string],
+        correctIndex: seed.correctIndex,
+      };
+    }
     return generateQuizByMode(mode, { grade });
     // refreshKey로 교사 요청 시에만 새 문제 고정
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, grade, refreshKey]);
+  }, [mode, grade, refreshKey, seed]);
 
   const customPreview: GeneratedQuiz | null =
     mode === 'CUSTOM' &&
@@ -78,14 +126,14 @@ export function NightQuizConfigForm({
 
   const preview = mode === 'CUSTOM' ? customPreview : lockedQuiz;
 
-  const canStart =
+  const canSave =
     mode !== 'CUSTOM'
-      ? Boolean(lockedQuiz)
+      ? Boolean(lockedQuiz) && Boolean(hint.trim())
       : Boolean(customPreview) && Boolean(hint.trim());
 
-  const handleStart = () => {
+  const handleSave = () => {
     if (!preview) return;
-    onStart({
+    onSave({
       mode,
       grade: mode === 'MATH' ? grade : null,
       question: preview.question,
@@ -103,6 +151,12 @@ export function NightQuizConfigForm({
       {pendingBuff && (
         <p className="rounded-xl bg-red-950/50 px-3 py-2 text-xs font-bold text-red-200 ring-1 ring-red-400/30">
           마피아 미션 보상 — 이번 밤 멀티킬(각자 1명 공격) 활성
+        </p>
+      )}
+      {seed && (
+        <p className="rounded-xl bg-emerald-950/45 px-3 py-2 text-xs font-bold text-emerald-100 ring-1 ring-emerald-400/30">
+          저장된 밤 미션이 있습니다. 수정 후 다시 저장하면 투표 종료 시 이
+          설정으로 밤이 시작됩니다.
         </p>
       )}
 
@@ -232,7 +286,7 @@ export function NightQuizConfigForm({
             ))}
           </ul>
           <p className="mt-2 text-[11px] text-white/45">
-            이 문제가 학생에게 그대로 출제됩니다. 부여 전에 확인하세요.
+            저장하면 투표가 끝난 뒤 이 문제가 학생에게 출제됩니다.
           </p>
         </div>
       )}
@@ -306,11 +360,11 @@ export function NightQuizConfigForm({
         )}
         <button
           type="button"
-          disabled={busy || !canStart || !hint.trim()}
-          onClick={handleStart}
+          disabled={busy || !canSave}
+          onClick={handleSave}
           className="flex-1 rounded-xl bg-indigo-500 py-3 text-sm font-black text-white disabled:opacity-50"
         >
-          미리보기 문제로 밤 시작
+          밤 미션 저장
         </button>
       </div>
     </div>

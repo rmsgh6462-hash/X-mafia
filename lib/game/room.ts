@@ -37,6 +37,7 @@ import { evaluateGameEnd } from '@/lib/game/winConditions';
 import type {
   GameRoom,
   GhostChatMessage,
+  MafiaChatMessage,
   MafiaMissionAssignConfig,
   MatchChatMessage,
   MissionOutcome,
@@ -57,6 +58,7 @@ export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
     theme,
     players: {},
     nightQuizState: null,
+    pendingNightQuizConfig: null,
     mafiaMissionState: emptyMafiaMissionState(),
     pendingMafiaNightBuff: false,
     isMafiaBuffActive: false,
@@ -73,6 +75,8 @@ export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
     voteEndsAt: null,
     voteTieResolution: 'RANDOM',
     revealDeathRoles: true,
+    allowMafiaTargetMafia: true,
+    mafiaChatEnabled: true,
     maxRounds: 3,
     currentRound: 0,
     winnerSide: null,
@@ -81,6 +85,7 @@ export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
     dayVoteResult: null,
     createdAt: Date.now(),
     ghostChat: {},
+    mafiaChat: {},
     matchChats: {},
     matchChatHistory: {},
     ghostPredictions: {},
@@ -205,6 +210,75 @@ function normalizeNightQuizState(
   };
 }
 
+function normalizePendingNightQuizConfig(
+  config: NightQuizConfig | null | undefined,
+): NightQuizConfig | null {
+  if (!config) return null;
+  const choices = Array.isArray(config.choices)
+    ? config.choices.map((c) => String(c ?? '')).slice(0, 4)
+    : [];
+  while (choices.length < 4) choices.push('');
+  const mode =
+    config.mode === 'KOREAN' ||
+    config.mode === 'GENERAL' ||
+    config.mode === 'CUSTOM' ||
+    config.mode === 'MATH'
+      ? config.mode
+      : 'MATH';
+  const correctIndex = Math.min(
+    3,
+    Math.max(0, Math.floor(config.correctIndex ?? 0)),
+  );
+  const question = String(config.question ?? '').trim();
+  const successHint = String(config.successHint ?? '').trim();
+  if (!question || !successHint || choices.some((c) => !c.trim())) {
+    // 불완전하게 저장된 값은 무시하고 기본 자동 생성으로 되돌린다.
+    return null;
+  }
+  return {
+    mode,
+    grade:
+      mode === 'MATH'
+        ? Math.min(6, Math.max(1, Math.floor(config.grade ?? 3)))
+        : null,
+    question,
+    answer: String(config.answer ?? choices[correctIndex] ?? '').trim(),
+    choices,
+    correctIndex,
+    timeLimitSec: Math.min(
+      300,
+      Math.max(5, Math.floor(config.timeLimitSec ?? 45)),
+    ),
+    successThresholdPercent: Math.min(
+      100,
+      Math.max(1, Math.floor(config.successThresholdPercent ?? 70)),
+    ),
+    successHint,
+  };
+}
+
+/** 교사가 낮/투표 중 미리 저장한 밤 미션 설정 */
+export function savePendingNightQuizConfig(
+  room: GameRoom,
+  config: NightQuizConfig,
+): GameRoom {
+  return {
+    ...room,
+    pendingNightQuizConfig: normalizePendingNightQuizConfig(config),
+  };
+}
+
+/**
+ * 밤 시작에 쓸 퀴즈 설정.
+ * 저장된 미션이 있으면 그대로 쓰고, 없으면 직전 밤 설정/기본값으로 생성한다.
+ */
+export function resolveNightQuizConfig(room: GameRoom): NightQuizConfig {
+  return (
+    normalizePendingNightQuizConfig(room.pendingNightQuizConfig) ??
+    buildAutoNightQuizConfig(room)
+  );
+}
+
 /** Firebase에 없는 새 필드 기본값 보정 */
 export function normalizeGameRoom(room: GameRoom): GameRoom {
   const players: Record<string, Player> = {};
@@ -230,6 +304,9 @@ export function normalizeGameRoom(room: GameRoom): GameRoom {
     theme: 'VILLAGE',
     players,
     nightQuizState: normalizeNightQuizState(room.nightQuizState),
+    pendingNightQuizConfig: normalizePendingNightQuizConfig(
+      room.pendingNightQuizConfig,
+    ),
     mafiaMissionState: room.mafiaMissionState ?? emptyMafiaMissionState(),
     pendingMafiaNightBuff: room.pendingMafiaNightBuff === true,
     isMafiaBuffActive: room.isMafiaBuffActive === true,
@@ -246,6 +323,8 @@ export function normalizeGameRoom(room: GameRoom): GameRoom {
     voteEndsAt: room.voteEndsAt ?? null,
     voteTieResolution: room.voteTieResolution ?? 'RANDOM',
     revealDeathRoles: room.revealDeathRoles !== false,
+    allowMafiaTargetMafia: room.allowMafiaTargetMafia !== false,
+    mafiaChatEnabled: room.mafiaChatEnabled !== false,
     maxRounds: Math.max(1, room.maxRounds ?? 3),
     currentRound: Math.max(0, room.currentRound ?? 0),
     winnerSide: room.winnerSide ?? null,
@@ -253,6 +332,7 @@ export function normalizeGameRoom(room: GameRoom): GameRoom {
     voteRevoteCandidates: room.voteRevoteCandidates ?? null,
     dayVoteResult: room.dayVoteResult ?? null,
     ghostChat: room.ghostChat ?? {},
+    mafiaChat: room.mafiaChat ?? {},
     matchChats: room.matchChats ?? {},
     matchChatHistory: room.matchChatHistory ?? {},
     ghostPredictions: room.ghostPredictions ?? {},
@@ -265,6 +345,54 @@ export function playerList(room: GameRoom): Player[] {
 
 export function alivePlayers(room: GameRoom): Player[] {
   return playerList(room).filter((p) => p.isAlive);
+}
+
+/** 대기 화면: 학생 퇴장 */
+export function removePlayerFromRoom(
+  room: GameRoom,
+  playerId: string,
+): GameRoom {
+  if (room.gameState !== 'WAITING') return room;
+  if (!room.players?.[playerId]) return room;
+  const players = { ...room.players };
+  delete players[playerId];
+  return { ...room, players };
+}
+
+/**
+ * 대기 화면: 닉네임 변경.
+ * 빈 이름·길이 초과·다른 학생과 중복이면 변경하지 않는다.
+ */
+export function renamePlayerInRoom(
+  room: GameRoom,
+  playerId: string,
+  nextName: string,
+): { room: GameRoom; error: string | null } {
+  if (room.gameState !== 'WAITING') {
+    return { room, error: '게임이 시작된 뒤에는 닉네임을 바꿀 수 없습니다.' };
+  }
+  const player = room.players?.[playerId];
+  if (!player) return { room, error: '해당 학생을 찾을 수 없습니다.' };
+  const trimmed = nextName.trim();
+  if (trimmed.length < 1 || trimmed.length > 12) {
+    return { room, error: '닉네임은 1~12자로 입력해 주세요.' };
+  }
+  const duplicate = playerList(room).some(
+    (p) => p.id !== playerId && p.name === trimmed,
+  );
+  if (duplicate) {
+    return { room, error: '이미 같은 닉네임의 학생이 있습니다.' };
+  }
+  return {
+    room: {
+      ...room,
+      players: {
+        ...room.players,
+        [playerId]: { ...player, name: trimmed },
+      },
+    },
+    error: null,
+  };
 }
 
 /** 직업 랜덤 배정 후 DAY_TALK로 전환 (기본 프리셋) */
@@ -339,6 +467,7 @@ export function startAssignedGame(room: GameRoom): GameRoom {
     matchEndsAt: null,
     voteEndsAt: null,
     nightQuizState: null,
+    pendingNightQuizConfig: room.pendingNightQuizConfig ?? null,
     mafiaMissionState: emptyMafiaMissionState(),
     pendingMafiaNightBuff: false,
     isMafiaBuffActive: false,
@@ -355,7 +484,27 @@ export function startAssignedGame(room: GameRoom): GameRoom {
     maxRounds,
     winnerSide: null,
     victoryTeam: null,
+    ghostChat: {},
+    mafiaChat: {},
+    matchChats: {},
+    matchChatHistory: {},
+    ghostPredictions: {},
   };
+}
+
+/**
+ * 하단 '게임 시작'용: 전원 직업+마피아가 이미 배정돼 있으면 그대로 시작하고,
+ * 아니면 기본 랜덤 배정으로 시작한다.
+ */
+export function startGamePreferringAssignedRoles(room: GameRoom): GameRoom {
+  const players = playerList(room);
+  const allAssigned =
+    players.length > 0 && players.every((p) => p.role != null);
+  const hasMafia = players.some((p) => p.role === 'MAFIA');
+  if (allAssigned && hasMafia) {
+    return startAssignedGame(room);
+  }
+  return assignRolesAndStart(room);
 }
 
 function startGameWithRoles(room: GameRoom, deck: Role[]): GameRoom {
@@ -386,6 +535,7 @@ function startGameWithRoles(room: GameRoom, deck: Role[]): GameRoom {
     matchEndsAt: null,
     voteEndsAt: null,
     nightQuizState: null,
+    pendingNightQuizConfig: room.pendingNightQuizConfig ?? null,
     mafiaMissionState: emptyMafiaMissionState(),
     pendingMafiaNightBuff: false,
     isMafiaBuffActive: false,
@@ -402,6 +552,11 @@ function startGameWithRoles(room: GameRoom, deck: Role[]): GameRoom {
     maxRounds,
     winnerSide: null,
     victoryTeam: null,
+    ghostChat: {},
+    mafiaChat: {},
+    matchChats: {},
+    matchChatHistory: {},
+    ghostPredictions: {},
   };
 }
 
@@ -738,6 +893,22 @@ export function setRevealDeathRoles(room: GameRoom, enabled: boolean): GameRoom 
   return { ...room, revealDeathRoles: enabled };
 }
 
+/** 마피아끼리(동료) 밤 지목 허용 여부 */
+export function setAllowMafiaTargetMafia(
+  room: GameRoom,
+  enabled: boolean,
+): GameRoom {
+  return { ...room, allowMafiaTargetMafia: enabled };
+}
+
+/** 마피아 비밀 채팅 on/off */
+export function setMafiaChatEnabled(
+  room: GameRoom,
+  enabled: boolean,
+): GameRoom {
+  return { ...room, mafiaChatEnabled: enabled };
+}
+
 export function setMaxRounds(room: GameRoom, maxRounds: number): GameRoom {
   return {
     ...room,
@@ -881,15 +1052,16 @@ export function resolveDayVote(room: GameRoom): GameRoom {
 
 /** 직전 밤 설정(있으면)을 이어받거나 기본 수학 퀴즈로 밤 미션을 만든다. */
 export function buildAutoNightQuizConfig(room: GameRoom): NightQuizConfig {
+  const pending = room.pendingNightQuizConfig;
   const prev = room.nightQuizState;
-  const rawMode = prev?.mode;
+  const rawMode = pending?.mode ?? prev?.mode;
   const mode: QuizMode =
     rawMode === 'KOREAN' || rawMode === 'GENERAL' || rawMode === 'MATH'
       ? rawMode
       : 'MATH';
   const grade = Math.min(
     6,
-    Math.max(1, prev?.grade ?? 3),
+    Math.max(1, pending?.grade ?? prev?.grade ?? 3),
   ) as ElementaryGrade;
   const generated = generateQuizByMode(mode, { grade });
   return {
@@ -899,12 +1071,21 @@ export function buildAutoNightQuizConfig(room: GameRoom): NightQuizConfig {
     answer: generated.answer,
     choices: [...generated.choices],
     correctIndex: generated.correctIndex,
-    timeLimitSec: Math.max(5, prev?.timeLimitSec ?? 45),
+    timeLimitSec: Math.max(
+      5,
+      pending?.timeLimitSec ?? prev?.timeLimitSec ?? 45,
+    ),
     successThresholdPercent: Math.min(
       100,
-      Math.max(1, prev?.successThresholdPercent ?? 70),
+      Math.max(
+        1,
+        pending?.successThresholdPercent ??
+          prev?.successThresholdPercent ??
+          70,
+      ),
     ),
     successHint:
+      pending?.successHint?.trim() ||
       prev?.successHint?.trim() ||
       '마피아 중 한 명은 오늘 평소보다 말이 적을 수 있습니다.',
   };
@@ -926,7 +1107,7 @@ export function resolveDayVoteAndEnterNight(
   const voteResult = afterVote.dayVoteResult;
   const night = startNightPhase(
     afterVote,
-    quizConfig ?? buildAutoNightQuizConfig(afterVote),
+    quizConfig ?? resolveNightQuizConfig(afterVote),
   );
   return {
     ...night,
@@ -952,18 +1133,8 @@ export function startNightPhase(
     cleared[p.id] = { ...p, nightTarget: null };
   });
 
-  const config: NightQuizConfig = quizConfig ?? {
-    mode: 'MATH',
-    grade: 3,
-    question: '1 + 1 = ?',
-    answer: '2',
-    choices: ['1', '2', '3', '4'],
-    correctIndex: 1,
-    timeLimitSec: 45,
-    successThresholdPercent: 70,
-    successHint:
-      '마피아 중 한 명은 오늘 평소보다 말이 적을 수 있습니다.',
-  };
+  const config: NightQuizConfig =
+    quizConfig ?? resolveNightQuizConfig(room);
 
   const activateBuff = room.pendingMafiaNightBuff === true;
 
@@ -1280,6 +1451,19 @@ export async function setNightTarget(
     throw new Error('자기 치료(자힐)는 게임당 1회만 사용할 수 있습니다.');
   }
 
+  if (
+    actor.role === 'MAFIA' &&
+    targetId &&
+    room.allowMafiaTargetMafia === false
+  ) {
+    const target = room.players[targetId];
+    if (target?.role === 'MAFIA') {
+      throw new Error(
+        '지금은 마피아끼리 지목할 수 없습니다. 다른 대상을 선택해 주세요.',
+      );
+    }
+  }
+
   await update(ref(db, `rooms/${trimmedPin}/players/${playerId}`), {
     nightTarget: targetId,
   });
@@ -1401,6 +1585,56 @@ export function listGhostChatMessages(
   return Object.values(room.ghostChat ?? {})
     .map(normalizeGhostMessage)
     .sort((a, b) => a.timestamp - b.timestamp);
+}
+
+/** 생존 마피아 전용 비밀 채팅 */
+export async function sendMafiaChat(
+  pin: string,
+  message: {
+    senderId: string;
+    senderName: string;
+    text: string;
+    timestamp?: number;
+  },
+): Promise<void> {
+  const trimmedPin = pin.replace(/\s/g, '');
+  const text = message.text.trim();
+  if (!text) return;
+
+  const db = getFirebaseDatabase();
+  const roomRef = ref(db, `rooms/${trimmedPin}`);
+  const snap = await get(roomRef);
+  if (!snap.exists()) throw new Error('방이 없습니다.');
+
+  const room = normalizeGameRoom(snap.val() as GameRoom);
+  const sender = room.players[message.senderId];
+  if (!sender) throw new Error('플레이어를 찾을 수 없습니다.');
+  if (!sender.isAlive || sender.role !== 'MAFIA') {
+    throw new Error('생존한 마피아만 비밀 채팅을 사용할 수 있습니다.');
+  }
+  if (room.mafiaChatEnabled === false) {
+    throw new Error('교사가 마피아 비밀 채팅을 끄셨습니다.');
+  }
+  if (room.gameState === 'WAITING' || room.gameState === 'ENDED') {
+    throw new Error('지금은 마피아 채팅을 사용할 수 없습니다.');
+  }
+
+  const timestamp = message.timestamp ?? Date.now();
+  const chatRef = push(ref(db, `rooms/${trimmedPin}/mafiaChat`));
+  const payload: MafiaChatMessage = {
+    id: chatRef.key ?? `m_${timestamp}`,
+    senderId: message.senderId,
+    senderName: message.senderName || sender.name,
+    text: text.slice(0, 200),
+    timestamp,
+  };
+  await set(chatRef, toFirebaseJson(payload));
+}
+
+export function listMafiaChatMessages(room: GameRoom): MafiaChatMessage[] {
+  return Object.values(room.mafiaChat ?? {}).sort(
+    (a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0),
+  );
 }
 
 /** 1:1 매칭 페어 키 (정렬된 playerId) */

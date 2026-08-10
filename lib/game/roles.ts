@@ -1,5 +1,7 @@
 ﻿import type { Role } from '@/types/game';
 
+import { getDefaultRoleConfig } from '@/lib/gameRules';
+
 function shuffle<T>(items: T[]): T[] {
   const arr = [...items];
   for (let i = arr.length - 1; i > 0; i -= 1) {
@@ -12,18 +14,7 @@ function shuffle<T>(items: T[]): T[] {
 /** 인원수에 맞춰 직업 목록을 구성한 뒤 셔플 (기본 프리셋) */
 export function buildRoleDeck(playerCount: number): Role[] {
   if (playerCount <= 0) return [];
-
-  const roles: Role[] = [];
-  const mafiaCount = Math.max(1, Math.floor(playerCount / 4));
-
-  for (let i = 0; i < mafiaCount; i += 1) roles.push('MAFIA');
-  if (playerCount >= 5) roles.push('DOCTOR');
-  if (playerCount >= 6) roles.push('POLICE');
-  if (playerCount >= 7) roles.push('REPORTER');
-  if (playerCount >= 8) roles.push('SPIRITUALIST');
-  while (roles.length < playerCount) roles.push('CITIZEN');
-
-  return shuffle(roles).slice(0, playerCount);
+  return buildRoleDeckFromCounts(playerCount, suggestedRoleCounts(playerCount));
 }
 
 /** 교사 지정 인원수로 직업 덱 생성 (나머지는 시민) */
@@ -44,12 +35,13 @@ export const DEFAULT_ROLE_COUNTS: RoleCountConfig = {
 };
 
 export function suggestedRoleCounts(playerCount: number): RoleCountConfig {
+  const preset = getDefaultRoleConfig(playerCount);
   return {
-    MAFIA: Math.max(1, Math.floor(playerCount / 4)),
-    DOCTOR: playerCount >= 5 ? 1 : 0,
-    POLICE: playerCount >= 6 ? 1 : 0,
-    REPORTER: playerCount >= 7 ? 1 : 0,
-    SPIRITUALIST: playerCount >= 8 ? 1 : 0,
+    MAFIA: preset.mafia,
+    DOCTOR: preset.doctor,
+    POLICE: preset.police,
+    REPORTER: preset.reporter,
+    SPIRITUALIST: preset.shaman,
   };
 }
 

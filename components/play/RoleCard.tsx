@@ -5,15 +5,20 @@ import { motion } from 'framer-motion';
 import { Sparkles, Users } from 'lucide-react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { ROLE_ACCENTS, ROLE_BLURBS, ROLE_LABELS } from '@/lib/game/roles';
+import { getCharacterStateForRole } from '@/lib/characterUtils';
 import type { MafiaMissionState, NightQuizState, Player, Role } from '@/types/game';
 
 export function RoleCard({
   role,
+  avatarId,
+  isAlive = true,
   nightQuiz,
   mafiaMission,
   mafiaAllies = [],
 }: {
   role: Role;
+  avatarId?: string | null;
+  isAlive?: boolean;
   nightQuiz?: NightQuizState | null;
   mafiaMission?: MafiaMissionState | null;
   /** 마피아만 — 다른 마피아 동료 목록 */
@@ -65,6 +70,25 @@ export function RoleCard({
               {ROLE_BLURBS[role]}
             </p>
 
+            {avatarId && (
+              <div className="mt-4 flex items-center gap-3 rounded-xl bg-black/25 px-3 py-2 ring-1 ring-white/10">
+                <CharacterAvatar
+                  avatarId={avatarId}
+                  isAlive={isAlive}
+                  state={isAlive ? getCharacterStateForRole(role) : 'dead'}
+                  size={64}
+                />
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/45">
+                    현재 캐릭터 상태
+                  </p>
+                  <p className="mt-1 truncate text-sm font-black text-white">
+                    {ROLE_LABELS[role]} 캐릭터
+                  </p>
+                </div>
+              </div>
+            )}
+
             {isMafia && (
               <div className="mt-auto space-y-2 pt-3">
                 <div className="rounded-lg bg-black/40 px-2.5 py-2 ring-1 ring-red-400/30">
@@ -86,6 +110,11 @@ export function RoleCard({
                           <CharacterAvatar
                             avatarId={ally.avatarId}
                             isAlive={ally.isAlive}
+                            state={
+                              ally.isAlive
+                                ? getCharacterStateForRole(ally.role)
+                                : 'dead'
+                            }
                             size={22}
                           />
                           <span className="truncate">{ally.name}</span>
