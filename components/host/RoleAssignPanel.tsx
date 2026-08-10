@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BadgeCheck,
   Dices,
@@ -23,6 +23,8 @@ import {
 import { getDefaultRoleConfig, type RoleConfig } from '@/lib/gameRules';
 import {
   countFixedRoles,
+  emptyRoleQuota,
+  resolveAssignmentsWithRandomFill,
   roleQuotaFromCounts,
   validateFixedAssignmentsAgainstCounts,
 } from '@/lib/roleAssignment';
@@ -81,6 +83,17 @@ function toRoleCountConfig(config: RoleConfig): RoleCountConfig {
   };
 }
 
+function sameCounts(a: RoleCountConfig, b: RoleCountConfig | null | undefined) {
+  if (!b) return false;
+  return (
+    a.MAFIA === b.MAFIA &&
+    a.DOCTOR === b.DOCTOR &&
+    a.POLICE === b.POLICE &&
+    a.REPORTER === b.REPORTER &&
+    a.SPIRITUALIST === b.SPIRITUALIST
+  );
+}
+
 const ROLE_TONE_CLASSES = {
   red: {
     card: 'border-red-400/25 bg-red-500/[0.08]',
@@ -112,32 +125,36 @@ const ROLE_TONE_CLASSES = {
 export function RoleAssignPanel({
   room,
   busy,
-  onRandomAssign,
-  onManualAssign,
-  onStart,
+  onSaveSetup,
+  onSaveAssignments,
+  onFillUnassigned,
 }: {
   room: GameRoom;
   busy?: boolean;
-  onRandomAssign: (
+  /** 인원·라운드 저장. 인원 지정 랜덤 모드에서는 pending 을 비운다. */
+  onSaveSetup: (
     counts: RoleCountConfig,
-    startNow: boolean,
     maxRounds: number,
+    options?: { clearPending?: boolean },
   ) => void;
-  onManualAssign: (
+  /** 직접 배정 드롭다운 변경 저장 */
+  onSaveAssignments: (
     assignments: Record<string, Role | null>,
     counts: RoleCountConfig,
-    fillRandom: boolean,
-  ) => void;
-  onStart: (
     maxRounds: number,
-    assignments: Record<string, Role | null>,
+  ) => void;
+  /** 미배정만 랜덤 채운 뒤 저장 */
+  onFillUnassigned: (
+    assignments: Record<string, Role>,
     counts: RoleCountConfig,
+    maxRounds: number,
   ) => void;
 }) {
   const players = useMemo(() => playerList(room), [room]);
   const n = players.length;
   const [mode, setMode] = useState<Mode>('random');
   const [counts, setCounts] = useState<RoleCountConfig>(() =>
+    room.roleCountConfig ??
     toRoleCountConfig(getDefaultRoleConfig(Math.max(n, 4))),
   );
   const [manual, setManual] = useState<Record<string, Role | null>>({});
@@ -145,37 +162,95 @@ export function RoleAssignPanel({
   const [maxRounds, setMaxRoundsLocal] = useState(
     () => room.maxRounds || defaultMaxRoundsFromMafiaCount(counts.MAFIA),
   );
+  const skipNextSetupSave = useRef(true);
+  const skipNextAssignmentSave = useRef(true);
+  const onSaveSetupRef = useRef(onSaveSetup);
+  const onSaveAssignmentsRef = useRef(onSaveAssignments);
+  onSaveSetupRef.current = onSaveSetup;
+  onSaveAssignmentsRef.current = onSaveAssignments;
 
   useEffect(() => {
-    const timer = window.setTimeout(
-      () =>
-        setCounts(toRoleCountConfig(getDefaultRoleConfig(Math.max(n, 4)))),
-      0,
-    );
+    if (!room.roleCountConfig) return;
+    if (sameCounts(counts, room.roleCountConfig)) return;
+    const timer = window.setTimeout(() => {
+      setCounts(room.roleCountConfig!);
+    }, 0);
     return () => window.clearTimeout(timer);
-  }, [n]);
+    // 원격 저장값만 반영. counts 자체는 의존에서 제외해 입력 중 덮어쓰기를 막는다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room.roleCountConfig]);
+
+  useEffect(() => {
+    if (room.roleCountConfig) return;
+    if (n <= 0) return;
+    const timer = window.setTimeout(() => {
+      setCounts(toRoleCountConfig(getDefaultRoleConfig(Math.max(n, 4))));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [n, room.roleCountConfig]);
 
   useEffect(() => {
     if (roundsDirty) return;
+    if (room.maxRounds > 0) {
+      const timer = window.setTimeout(() => setMaxRoundsLocal(room.maxRounds), 0);
+      return () => window.clearTimeout(timer);
+    }
     const next = defaultMaxRoundsFromMafiaCount(counts.MAFIA);
     const timer = window.setTimeout(() => setMaxRoundsLocal(next), 0);
     return () => window.clearTimeout(timer);
-  }, [counts.MAFIA, roundsDirty]);
+  }, [counts.MAFIA, roundsDirty, room.maxRounds]);
 
   useEffect(() => {
+    const pending = room.pendingRoleAssignments;
     const timer = window.setTimeout(() => {
       setManual((prev) => {
         const next: Record<string, Role | null> = {};
+        let changed = false;
         players.forEach((p) => {
-          next[p.id] = Object.prototype.hasOwnProperty.call(prev, p.id)
-            ? prev[p.id] ?? null
-            : null;
+          const fromPending =
+            pending && Object.prototype.hasOwnProperty.call(pending, p.id)
+              ? pending[p.id] ?? null
+              : Object.prototype.hasOwnProperty.call(prev, p.id)
+                ? prev[p.id] ?? null
+                : null;
+          next[p.id] = fromPending;
+          if (prev[p.id] !== fromPending) changed = true;
         });
-        return next;
+        const prevKeys = Object.keys(prev);
+        if (prevKeys.length !== players.length) changed = true;
+        return changed ? next : prev;
       });
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [players]);
+  }, [players, room.pendingRoleAssignments]);
+
+  // 수량 0이 된 직업·초과 배정은 드롭다운에서 빠지므로 선택값도 정리한다.
+  useEffect(() => {
+    const allowed = roleQuotaFromCounts(n, counts);
+    const timer = window.setTimeout(() => {
+      setManual((prev) => {
+        const used = emptyRoleQuota();
+        let changed = false;
+        const next: Record<string, Role | null> = {};
+        players.forEach((p) => {
+          const role = prev[p.id] ?? null;
+          if (!role) {
+            next[p.id] = null;
+            return;
+          }
+          if (used[role] >= allowed[role]) {
+            next[p.id] = null;
+            changed = true;
+            return;
+          }
+          used[role] += 1;
+          next[p.id] = role;
+        });
+        return changed ? next : prev;
+      });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [counts, n, players]);
 
   const special = specialRoleTotal(counts);
   const citizenCount = Math.max(0, n - special);
@@ -194,14 +269,33 @@ export function RoleAssignPanel({
   );
   const manualFixedCount = players.filter((p) => Boolean(manual[p.id])).length;
   const manualUnassignedCount = n - manualFixedCount;
-  const finalMafiaCount = counts.MAFIA;
-  const manualMafiaTooMany = n > 0 && finalMafiaCount * 2 >= n;
-  const manualReady =
-    players.length >= 4 &&
-    countsValid &&
-    !overflowWarning &&
-    finalMafiaCount >= 1 &&
-    !manualMafiaTooMany;
+
+  useEffect(() => {
+    if (skipNextSetupSave.current) {
+      skipNextSetupSave.current = false;
+      return;
+    }
+    if (!countsValid && n > 0) return;
+    const timer = window.setTimeout(() => {
+      onSaveSetupRef.current(counts, maxRounds, {
+        clearPending: mode === 'random',
+      });
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [counts, maxRounds, mode, countsValid, n]);
+
+  useEffect(() => {
+    if (mode !== 'manual') return;
+    if (skipNextAssignmentSave.current) {
+      skipNextAssignmentSave.current = false;
+      return;
+    }
+    if (!countsValid || overflowWarning) return;
+    const timer = window.setTimeout(() => {
+      onSaveAssignmentsRef.current(manual, counts, maxRounds);
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [manual, counts, maxRounds, mode, countsValid, overflowWarning]);
 
   const setCount = (key: keyof RoleCountConfig, value: number) => {
     setCounts((c) => ({
@@ -237,6 +331,21 @@ export function RoleAssignPanel({
       next[p.id] = null;
     });
     setManual(next);
+  };
+
+  const fillUnassignedRandomly = () => {
+    if (!countsValid || overflowWarning || manualUnassignedCount < 1) return;
+    try {
+      const resolved = resolveAssignmentsWithRandomFill(
+        players.map((p) => p.id),
+        manual,
+        counts,
+      );
+      setManual(resolved);
+      onFillUnassigned(resolved, counts, maxRounds);
+    } catch {
+      // 수량 검증이 이미 막아주므로 UI 경고만 유지
+    }
   };
 
   const roleCountEditor = (
@@ -430,28 +539,10 @@ export function RoleAssignPanel({
       {mode === 'random' ? (
         <div className="space-y-4">
           {roleCountEditor}
-          <p className="text-sm text-white/60">
-            직업별 인원만 정하면 자동으로 랜덤 배정됩니다. 나머지{' '}
-            {citizenCount}명은 시민입니다.
+          <p className="rounded-xl bg-sky-500/10 px-4 py-3 text-xs leading-relaxed text-sky-100/90 ring-1 ring-sky-400/20">
+            직업별 인원만 정하면 됩니다. 하단 <strong>게임 시작</strong>을 누르면
+            이 인원에 맞게 랜덤 배정됩니다. 나머지 {citizenCount}명은 시민입니다.
           </p>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={busy || n < 1 || !countsValid}
-              onClick={() => onRandomAssign(counts, false, maxRounds)}
-              className="rounded-xl bg-white/10 px-4 py-2.5 text-sm font-bold text-white hover:bg-white/20 disabled:opacity-40"
-            >
-              랜덤 배정만
-            </button>
-            <button
-              type="button"
-              disabled={busy || n < 4 || !countsValid}
-              onClick={() => onRandomAssign(counts, true, maxRounds)}
-              className="rounded-xl bg-amber-400 px-4 py-2.5 text-sm font-black text-stone-900 hover:bg-amber-300 disabled:opacity-40"
-            >
-              랜덤 배정 후 게임 시작
-            </button>
-          </div>
         </div>
       ) : (
         <div className="space-y-4">
@@ -459,8 +550,8 @@ export function RoleAssignPanel({
 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-white/60">
-              필요한 학생만 직접 지정하세요. 나머지는 시작 시 자동 랜덤
-              배정됩니다.
+              필요한 학생만 직접 지정한 뒤, 미배정 학생을 랜덤으로 채울 수
+              있습니다. 배정 후 드롭다운으로 수정하세요.
             </p>
             <button
               type="button"
@@ -468,54 +559,66 @@ export function RoleAssignPanel({
               onClick={resetAllToUnassigned}
               className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-2 text-xs font-bold text-white hover:bg-white/20 disabled:opacity-40"
             >
-              <Dices className="h-3.5 w-3.5" />
-              전체 랜덤으로 초기화
+              <RotateCcw className="h-3.5 w-3.5" />
+              전체 미배정으로
             </button>
           </div>
 
           <ul className="max-h-64 space-y-2 overflow-y-auto">
-            {players.map((p) => (
-              <li
-                key={p.id}
-                className="flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2"
-              >
-                <CharacterAvatar
-                  avatarId={p.avatarId}
-                  size={40}
-                  isAlive
-                  previewOnHover
-                />
-                <span className="min-w-0 flex-1 truncate text-sm font-bold">
-                  {p.name}
-                </span>
-                <select
-                  value={manual[p.id] ?? ''}
-                  onChange={(e) =>
-                    setManual((m) => ({
-                      ...m,
-                      [p.id]: (e.target.value || null) as Role | null,
-                    }))
-                  }
-                  className="rounded-lg border border-white/15 bg-stone-900 px-2 py-1.5 text-sm text-white"
+            {players.map((p) => {
+              const selected = manual[p.id] ?? null;
+              const options = ASSIGNABLE_ROLES.filter((role) => {
+                const allowed = allowedQuota[role];
+                if (allowed <= 0) return false;
+                const usedElsewhere =
+                  fixedQuota[role] - (selected === role ? 1 : 0);
+                return usedElsewhere < allowed;
+              });
+              return (
+                <li
+                  key={p.id}
+                  className="flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2"
                 >
-                  <option value="">🎲 미배정 (랜덤)</option>
-                  {ASSIGNABLE_ROLES.map((r) => (
-                    <option key={r} value={r}>
-                      {ROLE_LABELS[r]}
-                    </option>
-                  ))}
-                </select>
-              </li>
-            ))}
+                  <CharacterAvatar
+                    avatarId={p.avatarId}
+                    size={40}
+                    isAlive
+                    previewOnHover
+                  />
+                  <span className="min-w-0 flex-1 truncate text-sm font-bold">
+                    {p.name}
+                  </span>
+                  <select
+                    value={selected ?? ''}
+                    onChange={(e) =>
+                      setManual((m) => ({
+                        ...m,
+                        [p.id]: (e.target.value || null) as Role | null,
+                      }))
+                    }
+                    className="rounded-lg border border-white/15 bg-stone-900 px-2 py-1.5 text-sm text-white"
+                  >
+                    <option value="">🎲 미배정</option>
+                    {options.map((r) => (
+                      <option key={r} value={r}>
+                        {ROLE_LABELS[r]}
+                        {allowedQuota[r] > 1
+                          ? ` (${fixedQuota[r] - (selected === r ? 1 : 0)}/${allowedQuota[r]})`
+                          : ''}
+                      </option>
+                    ))}
+                  </select>
+                </li>
+              );
+            })}
           </ul>
 
           <p className="rounded-xl bg-sky-500/10 px-4 py-3 text-xs leading-relaxed text-sky-100/90 ring-1 ring-sky-400/20">
-            직업을 직접 지정하지 않은 학생은 게임 시작 시 남은 역할 중
-            무작위로 자동 배정됩니다.
+            미배정 학생은 아래 버튼으로 남은 직업 풀에서 랜덤 배정됩니다. 확인·수정
+            후 하단 <strong>게임 시작</strong>을 누르세요.
             {manualUnassignedCount > 0 && (
               <span className="mt-1 block font-semibold text-sky-200">
-                현재 미배정 {manualUnassignedCount}명 · 수동 지정{' '}
-                {manualFixedCount}명
+                현재 미배정 {manualUnassignedCount}명 · 지정 {manualFixedCount}명
               </span>
             )}
           </p>
@@ -524,7 +627,7 @@ export function RoleAssignPanel({
             <div className="rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
               <p>{overflowWarning}</p>
               <p className="mt-1 text-xs text-red-200/80">
-                직업 수량을 늘리거나, 학생 배정을 줄인 뒤 다시 시작해 주세요.
+                직업 수량을 늘리거나, 학생 배정을 줄인 뒤 다시 시도해 주세요.
               </p>
               <ul className="mt-2 grid gap-1 text-xs text-red-100/85 sm:grid-cols-2">
                 {ASSIGNABLE_ROLES.map((role) => (
@@ -537,52 +640,21 @@ export function RoleAssignPanel({
             </div>
           )}
 
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={
-                busy || n < 1 || !countsValid || Boolean(overflowWarning)
-              }
-              onClick={() => onManualAssign(manual, counts, false)}
-              className="rounded-xl bg-white/10 px-4 py-2.5 text-sm font-bold text-white hover:bg-white/20 disabled:opacity-40"
-            >
-              수동 배정만 저장
-            </button>
-            <button
-              type="button"
-              disabled={
-                busy || n < 1 || !countsValid || Boolean(overflowWarning)
-              }
-              onClick={() => onManualAssign(manual, counts, true)}
-              className="rounded-xl bg-white/10 px-4 py-2.5 text-sm font-bold text-white hover:bg-white/20 disabled:opacity-40"
-            >
-              미배정 포함 미리 배정
-            </button>
-            <button
-              type="button"
-              disabled={busy || !manualReady}
-              onClick={() => onStart(maxRounds, manual, counts)}
-              className="rounded-xl bg-amber-400 px-4 py-2.5 text-sm font-black text-stone-900 hover:bg-amber-300 disabled:opacity-40"
-            >
-              배정 후 게임 시작
-            </button>
-          </div>
-          {n >= 4 && !manualReady && (
-            <p className="text-sm text-amber-200/90">
-              {overflowWarning
-                ? '수동 배정 수량이 설정을 초과해 시작할 수 없습니다.'
-                : !countsValid
-                  ? '직업 수량 설정을 먼저 확인해 주세요.'
-                  : manualMafiaTooMany
-                    ? '마피아가 전체 인원의 50% 이상이면 게임을 시작할 수 없습니다.'
-                    : '마피아를 최소 1명 설정해야 시작할 수 있습니다.'}
-            </p>
-          )}
-          {n < 4 && (
-            <p className="text-sm text-white/50">
-              게임 시작에는 최소 4명이 필요합니다.
-            </p>
-          )}
+          <button
+            type="button"
+            disabled={
+              busy ||
+              n < 1 ||
+              !countsValid ||
+              Boolean(overflowWarning) ||
+              manualUnassignedCount < 1
+            }
+            onClick={fillUnassignedRandomly}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-amber-400 px-4 py-3 text-sm font-black text-stone-900 hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
+          >
+            <Dices className="h-4 w-4" />
+            미배정 학생 랜덤 배정하기
+          </button>
         </div>
       )}
     </section>

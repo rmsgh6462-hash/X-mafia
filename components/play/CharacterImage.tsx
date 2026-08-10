@@ -39,6 +39,12 @@ export function CharacterImage({
     if (state === 'doctor_fail') {
       sources.push(getCharacterImageUrl(characterId, 'doctor'));
     }
+    if (state === 'doctor_idle') {
+      sources.push(getCharacterImageUrl(characterId, 'doctor'));
+    }
+    if (state === 'reporter_idle') {
+      sources.push(getCharacterImageUrl(characterId, 'reporter'));
+    }
     if (state !== 'normal') {
       sources.push(normalSrc);
     }

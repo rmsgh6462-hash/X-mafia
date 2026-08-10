@@ -334,7 +334,7 @@ function PlayPageInner() {
     setVoteDeathOpen(true);
   }, [room?.dayVoteResult, room, me]);
 
-  // 아침 결과 공개 이벤트는 새 결과가 처음 도착한 순간 한 번만 보여 준다.
+  // 아침 결과 공개 — 교사 morningRevealIndex와 동기화해 다시 열어 둔다.
   useEffect(() => {
     if (
       !room ||
@@ -351,6 +351,7 @@ function PlayPageInner() {
     const key = [
       room.roomId,
       room.currentRound,
+      room.morningRevealIndex ?? 0,
       morningEvents.join(','),
       morningActiveEvents.map((e) => e.event).join(','),
       (room.nightResults?.deadPlayerIds ?? []).join(','),
@@ -362,6 +363,7 @@ function PlayPageInner() {
   }, [
     room?.gameState,
     room?.nightResults,
+    room?.morningRevealIndex,
     room,
     me,
     morningEvents,
@@ -910,6 +912,7 @@ function PlayPageInner() {
           result={room.nightResults}
           players={room.players}
           revealRoles={room.revealDeathRoles !== false}
+          controlledIndex={room.morningRevealIndex ?? 0}
           onClose={() => setMorningResultOpen(false)}
         />
       )}

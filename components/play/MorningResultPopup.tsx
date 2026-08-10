@@ -9,7 +9,7 @@ import {
   Sunrise,
 } from 'lucide-react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
-import { MorningReporterNews } from '@/components/play/MorningReporterNews';
+import { NewspaperArticleModal } from '@/components/play/NewspaperArticleModal';
 import { playerGenderFromAvatarId } from '@/lib/game/avatars';
 import { playMorningEventSound } from '@/lib/game/audio';
 import { getCharacterStateForRole } from '@/lib/characterUtils';
@@ -25,7 +25,9 @@ import type {
 const EVENT_ORDER: MorningEvent[] = [
   'MAFIA_KILL',
   'DOCTOR_DEFEND',
+  'DOCTOR_IDLE',
   'REPORTER_NEWS',
+  'REPORTER_IDLE',
 ];
 
 type IdentityRevealStep =
@@ -115,7 +117,15 @@ export function getMorningEvents(
   if (result.reporterNews && result.reporterTargetId) {
     legacyEvents.push('REPORTER_NEWS');
   }
-  return legacyEvents;
+  const doctorAction = result.actionLog?.find((item) => item.role === 'DOCTOR');
+  if (doctorAction && !doctorAction.targetId) legacyEvents.push('DOCTOR_IDLE');
+  const reporterAction = result.actionLog?.find(
+    (item) => item.role === 'REPORTER',
+  );
+  if (reporterAction && !reporterAction.targetId) legacyEvents.push('REPORTER_IDLE');
+  return [...legacyEvents].sort(
+    (a, b) => EVENT_ORDER.indexOf(a) - EVENT_ORDER.indexOf(b),
+  );
 }
 
 export function MorningSequenceModal({
@@ -125,6 +135,8 @@ export function MorningSequenceModal({
   result,
   players,
   revealRoles,
+  /** 교사 화면의 morningRevealIndex — 있으면 자동 넘김 없이 동기화 */
+  controlledIndex,
   onClose,
 }: {
   open: boolean;
@@ -135,18 +147,31 @@ export function MorningSequenceModal({
   result: NightResults | null | undefined;
   players: Record<string, Player>;
   revealRoles: boolean;
+  controlledIndex?: number;
   onClose: () => void;
 }) {
-  const [eventIndex, setEventIndex] = useState(0);
+  const [localIndex, setLocalIndex] = useState(0);
   const [identityStep, setIdentityStep] =
     useState<IdentityRevealStep>('NONE');
   const onCloseRef = useRef(onClose);
+  const teacherControlled = controlledIndex != null;
   const sequence = useMemo<ActiveMorningEvent[]>(() => {
     if (activeEvents.length > 0) return sortMorningEvents(activeEvents);
     return (events.length > 0 ? events : getMorningEvents(result)).map((event) => {
       const deadPlayerIds = deadIdsOf(result);
+      const idleRole =
+        event === 'DOCTOR_IDLE'
+          ? 'DOCTOR'
+          : event === 'REPORTER_IDLE'
+            ? 'REPORTER'
+            : null;
+      const idleActor = idleRole
+        ? Object.values(players).find((player) => player.role === idleRole)
+        : null;
       const targetId =
-        event === 'DOCTOR_DEFEND'
+        idleRole
+          ? null
+          : event === 'DOCTOR_DEFEND'
           ? result?.doctorSavedPlayerId ?? null
           : event === 'REPORTER_NEWS'
             ? result?.reporterTargetId ?? null
@@ -154,7 +179,7 @@ export function MorningSequenceModal({
       const target = targetId ? players[targetId] : null;
       return {
         event,
-        actorId: null,
+        actorId: idleActor?.id ?? null,
         targetId,
         targetName: target?.name ?? null,
         targetGender: resolvePlayerGender(target),
@@ -164,9 +189,25 @@ export function MorningSequenceModal({
     });
   }, [activeEvents, events, players, result]);
 
+  const eventIndex = teacherControlled
+    ? Math.min(
+        Math.max(0, controlledIndex),
+        Math.max(0, sequence.length - 1),
+      )
+    : localIndex;
+
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
+
+  useEffect(() => {
+    if (!open) {
+      setLocalIndex(0);
+      setIdentityStep('NONE');
+      return;
+    }
+    setIdentityStep('NONE');
+  }, [open, eventIndex]);
 
   const currentEvent = sequence[eventIndex] ?? null;
   const currentType = currentEvent?.event ?? null;
@@ -213,13 +254,16 @@ export function MorningSequenceModal({
       return () => window.clearTimeout(timer);
     }
 
+    // 교사 수동 진행: 직업 공개 연출까지만 자동, 다음 이벤트는 교사가 넘긴다.
+    if (teacherControlled) return;
+
     const timer = window.setTimeout(() => {
       setIdentityStep('NONE');
       if (eventIndex >= sequence.length - 1) {
-        setEventIndex(0);
+        setLocalIndex(0);
         onCloseRef.current();
       } else {
-        setEventIndex((index) => index + 1);
+        setLocalIndex((index) => index + 1);
       }
     }, canRevealIdentity && identityStep === 'REVEAL_FULL_ROLE' ? 2500 : 2400);
     return () => window.clearTimeout(timer);
@@ -231,6 +275,7 @@ export function MorningSequenceModal({
     identityStep,
     sequence.length,
     result,
+    teacherControlled,
   ]);
 
   // open 이어도 큐/결과가 없으면 렌더하지 않음 (훅 이후 early return)
@@ -238,16 +283,20 @@ export function MorningSequenceModal({
 
   const lastEvent = eventIndex >= sequence.length - 1;
   const closePopup = () => {
-    setEventIndex(0);
+    setLocalIndex(0);
     setIdentityStep('NONE');
     onClose();
   };
   const nextOrClose = () => {
+    if (teacherControlled) {
+      closePopup();
+      return;
+    }
     setIdentityStep('NONE');
     if (lastEvent) {
       closePopup();
     } else {
-      setEventIndex((index) => index + 1);
+      setLocalIndex((index) => index + 1);
     }
   };
 
@@ -281,7 +330,7 @@ export function MorningSequenceModal({
             onClick={(event) => event.stopPropagation()}
           >
             {currentType === 'REPORTER_NEWS' && (
-              <MorningReporterNews
+              <NewspaperArticleModal
                 targetName={
                   currentEvent.targetName ??
                   (currentEvent.targetId ? players[currentEvent.targetId]?.name : null) ??
@@ -304,9 +353,20 @@ export function MorningSequenceModal({
                       ? players[result.reporterTargetId]?.avatarId
                       : null
                 }
+                reporterName={
+                  currentEvent.actorId
+                    ? players[currentEvent.actorId]?.name
+                    : null
+                }
+                reporterAvatarId={
+                  currentEvent.actorId
+                    ? players[currentEvent.actorId]?.avatarId
+                    : null
+                }
                 onClose={closePopup}
                 onNext={nextOrClose}
                 hasNext={!lastEvent}
+                hideActions={teacherControlled}
               />
             )}
             {currentType === 'MAFIA_KILL' && (
@@ -319,6 +379,18 @@ export function MorningSequenceModal({
                 onClose={closePopup}
                 onNext={nextOrClose}
                 hasNext={!lastEvent}
+                hideActions={teacherControlled}
+              />
+            )}
+            {(currentType === 'DOCTOR_IDLE' || currentType === 'REPORTER_IDLE') && (
+              <RoleIdlePanel
+                event={currentEvent}
+                players={players}
+                role={currentType === 'DOCTOR_IDLE' ? 'DOCTOR' : 'REPORTER'}
+                onClose={closePopup}
+                onNext={nextOrClose}
+                hasNext={!lastEvent}
+                hideActions={teacherControlled}
               />
             )}
             {currentType === 'DOCTOR_DEFEND' &&
@@ -329,6 +401,7 @@ export function MorningSequenceModal({
                   onClose={closePopup}
                   onNext={nextOrClose}
                   hasNext={!lastEvent}
+                  hideActions={teacherControlled}
                 />
               ) : (
                 <DoctorFailPanel
@@ -337,6 +410,7 @@ export function MorningSequenceModal({
                   onClose={closePopup}
                   onNext={nextOrClose}
                   hasNext={!lastEvent}
+                  hideActions={teacherControlled}
                 />
               ))}
           </motion.div>
@@ -345,7 +419,7 @@ export function MorningSequenceModal({
             onClick={closePopup}
             className="fixed bottom-5 right-5 z-[95] rounded-full bg-black/75 px-4 py-2.5 text-xs font-black text-white ring-1 ring-white/25 transition hover:bg-black/90"
           >
-            연출 건너뛰기
+            {teacherControlled ? '화면만 닫기' : '연출 건너뛰기'}
           </button>
         </motion.div>
       )}
@@ -361,12 +435,16 @@ function PopupActions({
   onNext,
   hasNext,
   tone,
+  hideActions,
 }: {
   onClose: () => void;
   onNext: () => void;
   hasNext: boolean;
   tone: 'news' | 'danger' | 'safe';
+  hideActions?: boolean;
 }) {
+  if (hideActions) return null;
+
   const buttonClass = {
     news: 'bg-slate-900 text-amber-50 hover:bg-slate-800',
     danger: 'bg-red-100 text-red-950 hover:bg-white',
@@ -393,6 +471,77 @@ function PopupActions({
   );
 }
 
+function RoleIdlePanel({
+  event,
+  players,
+  role,
+  onClose,
+  onNext,
+  hasNext,
+  hideActions,
+}: {
+  event: ActiveMorningEvent;
+  players: Record<string, Player>;
+  role: 'DOCTOR' | 'REPORTER';
+  onClose: () => void;
+  onNext: () => void;
+  hasNext: boolean;
+  hideActions?: boolean;
+}) {
+  const actor = event.actorId ? players[event.actorId] : null;
+  const isDoctor = role === 'DOCTOR';
+  const state = isDoctor ? 'doctor_idle' : 'reporter_idle';
+  const title = isDoctor ? '의사가 밤새 조용히 밤을 보냈습니다.' : '기자가 밤새 조용히 밤을 보냈습니다.';
+  const message = isDoctor
+    ? '치료 대상을 정하지 못해 오늘 밤은 아무도 치료하지 않았습니다.'
+    : '취재 대상을 정하지 못해 오늘 밤은 특종을 찾지 못했습니다.';
+
+  return (
+    <motion.section
+      className={`relative overflow-hidden rounded-2xl border text-white shadow-2xl ${
+        isDoctor
+          ? 'border-emerald-300/30 bg-[#071c1b] shadow-emerald-950/70'
+          : 'border-amber-200/35 bg-[#21160d] shadow-amber-950/70'
+      }`}
+      initial={{ opacity: 0, scale: 0.94, y: 18 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+    >
+      <div
+        aria-hidden="true"
+        className={`pointer-events-none absolute inset-0 opacity-70 ${
+          isDoctor
+            ? 'bg-[radial-gradient(circle_at_50%_24%,rgba(52,211,153,.28),transparent_46%),linear-gradient(135deg,rgba(14,116,144,.2),transparent_58%)]'
+            : 'bg-[radial-gradient(circle_at_50%_24%,rgba(251,191,36,.26),transparent_46%),linear-gradient(135deg,rgba(146,64,14,.25),transparent_58%)]'
+        }`}
+      />
+      <div className="relative flex flex-col items-center px-5 pb-6 pt-7 text-center">
+        <p className={`text-xs font-black uppercase tracking-[0.24em] ${isDoctor ? 'text-emerald-200' : 'text-amber-200'}`}>
+          {isDoctor ? 'Doctor Night Log' : 'Reporter Night Log'}
+        </p>
+        <div className={`mt-5 rounded-[2rem] p-3 ring-4 ${isDoctor ? 'bg-emerald-950/60 ring-emerald-200/25' : 'bg-amber-950/55 ring-amber-200/25'}`}>
+          <CharacterAvatar
+            avatarId={actor?.avatarId ?? 'M0'}
+            isAlive={actor?.isAlive ?? true}
+            state={state}
+            size={150}
+            className="relative z-10"
+          />
+        </div>
+        <h2 id="morning-result-title" className="mt-6 text-balance text-2xl font-black leading-tight sm:text-3xl">
+          {title}
+        </h2>
+        <p className="mt-4 max-w-sm text-sm font-bold leading-relaxed text-white/70 sm:text-base">
+          {message}
+        </p>
+        <p className={`mt-4 rounded-full px-4 py-2 text-xs font-black ring-1 ${isDoctor ? 'bg-emerald-400/10 text-emerald-100 ring-emerald-200/20' : 'bg-amber-400/10 text-amber-100 ring-amber-200/20'}`}>
+          다음 아침에는 다시 활동할 수 있습니다.
+        </p>
+      </div>
+      <PopupActions onClose={onClose} onNext={onNext} hasNext={hasNext} tone={isDoctor ? 'safe' : 'news'} hideActions={hideActions} />
+    </motion.section>
+  );
+}
+
 function MafiaKillPanel({
   result,
   players,
@@ -402,6 +551,7 @@ function MafiaKillPanel({
   onClose,
   onNext,
   hasNext,
+  hideActions,
 }: {
   result: NightResults;
   players: Record<string, Player>;
@@ -411,6 +561,7 @@ function MafiaKillPanel({
   onClose: () => void;
   onNext: () => void;
   hasNext: boolean;
+  hideActions?: boolean;
 }) {
   const deadIds = deadIdsOf(result);
   const targetId = event.targetId ?? deadIds[0] ?? null;
@@ -434,6 +585,13 @@ function MafiaKillPanel({
       <div className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-red-600 via-violet-400 to-red-600 opacity-80" />
       <div className="relative overflow-hidden px-5 pb-6 pt-7">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(127,29,29,0.45),transparent_60%)]" />
+        <div className="pointer-events-none absolute left-[12%] top-[14%] h-16 w-16 rounded-full bg-slate-100/10 blur-sm" />
+        <motion.div
+          aria-hidden="true"
+          className="pointer-events-none absolute -inset-x-16 bottom-0 h-1/3 bg-slate-300/10 blur-2xl"
+          animate={{ x: ['-7%', '7%', '-7%'], opacity: [0.25, 0.55, 0.25] }}
+          transition={{ duration: 4.5, repeat: Infinity, ease: 'easeInOut' }}
+        />
         <div className="relative flex items-center justify-center gap-2 text-xs font-black uppercase tracking-[0.2em] text-red-200">
           <Radio className="h-4 w-4 animate-pulse" />
           Night Alert · Mafia Attack
@@ -527,6 +685,7 @@ function MafiaKillPanel({
         onNext={onNext}
         hasNext={hasNext}
         tone="danger"
+        hideActions={hideActions}
       />
     </motion.section>
   );
@@ -538,12 +697,14 @@ function DoctorDefendPanel({
   onClose,
   onNext,
   hasNext,
+  hideActions,
 }: {
   event: ActiveMorningEvent;
   players: Record<string, Player>;
   onClose: () => void;
   onNext: () => void;
   hasNext: boolean;
+  hideActions?: boolean;
 }) {
   const defended = event.success === true;
   const targetName = event.targetName ??
@@ -603,6 +764,7 @@ function DoctorDefendPanel({
         onNext={onNext}
         hasNext={hasNext}
         tone="safe"
+        hideActions={hideActions}
       />
     </motion.section>
   );
@@ -614,12 +776,14 @@ function DoctorFailPanel({
   onClose,
   onNext,
   hasNext,
+  hideActions,
 }: {
   event: ActiveMorningEvent;
   players: Record<string, Player>;
   onClose: () => void;
   onNext: () => void;
   hasNext: boolean;
+  hideActions?: boolean;
 }) {
   const targetPlayer = event.targetId ? players[event.targetId] : null;
   const doctorPlayer = event.actorId ? players[event.actorId] : null;
@@ -667,6 +831,7 @@ function DoctorFailPanel({
         onNext={onNext}
         hasNext={hasNext}
         tone="safe"
+        hideActions={hideActions}
       />
     </motion.section>
   );

@@ -31,7 +31,9 @@ export type MissionOutcome = 'PENDING' | 'SUCCESS' | 'FAIL' | null;
 /** 아침 결과 팝업 연출 종류 */
 export type MorningEvent =
   | 'DOCTOR_DEFEND'
+  | 'DOCTOR_IDLE'
   | 'REPORTER_NEWS'
+  | 'REPORTER_IDLE'
   | 'MAFIA_KILL';
 
 /** 아침 순차 연출 큐에 전달하는 실제 밤 행동 스냅샷 */
@@ -297,6 +299,11 @@ export interface GameRoom {
 
   currentHint: string | null;
   nightResults: NightResults | null;
+  /**
+   * RESULT 단계 아침 공개 큐 인덱스 (0부터).
+   * 교사가 다음을 눌러 사망자 → 의사 → 기자 순으로 수동 진행한다.
+   */
+  morningRevealIndex: number;
   gmEvent: GmEvent;
   votes: Record<string, string>;
   matchEndsAt: number | null;
@@ -342,6 +349,16 @@ export interface GameRoom {
    * 게임 시작 시 실제 players[].role 로 이전되고 null 로 비운다.
    */
   pendingRoleAssignments: Record<string, Role | null> | null;
+  /**
+   * 교사 직업 인원 설정. 하단 게임 시작 시 미배정 학생 랜덤 채움에 사용.
+   */
+  roleCountConfig: {
+    MAFIA: number;
+    DOCTOR: number;
+    POLICE: number;
+    REPORTER: number;
+    SPIRITUALIST: number;
+  } | null;
 }
 
 /** 밤 시작 시 퀴즈 설정 */

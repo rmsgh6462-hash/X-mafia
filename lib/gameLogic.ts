@@ -206,7 +206,7 @@ export function resolveNight(
   const policeReport = resolvePoliceInvestigation(nextRoom);
 
   // 아침 공개 큐는 고정 순서(마피아 → 의사 → 기자)로 만든다.
-  // 밤에 행동을 선택하지 않았거나, 해당 직업이 이번 밤 사망했다면 큐에서 제외한다.
+  // 능력을 쓰지 않았거나 해당 직업이 이미 탈락한 경우에도 미행동 연출을 남긴다.
   const activeEvents: ActiveMorningEvent[] = [];
   const mafiaActor = playersOf(nextRoom).find(
     (p) => p.isAlive && p.role === 'MAFIA' && Boolean(p.nightTarget),
@@ -223,32 +223,39 @@ export function resolveNight(
     });
   }
 
-  const doctorActor = playersOf(nextRoom).find(
-    (p) =>
-      p.isAlive &&
-      p.role === 'DOCTOR' &&
-      Boolean(p.nightTarget) &&
-      !deadPlayerIds.includes(p.id) &&
-      p.nightTarget === doctorSave.selectedId,
-  );
-  if (doctorActor && doctorSave.selectedId) {
-    const target = nextRoom.players[doctorSave.selectedId];
+  const doctorActor = playersOf(nextRoom).find((p) => p.role === 'DOCTOR');
+  if (
+    doctorActor &&
+    doctorActor.isAlive &&
+    !deadPlayerIds.includes(doctorActor.id) &&
+    doctorActor.nightTarget
+  ) {
+    const targetId = doctorActor.nightTarget;
+    const target = nextRoom.players[targetId];
     activeEvents.push({
       event: 'DOCTOR_DEFEND',
       actorId: doctorActor.id,
-      targetId: doctorSave.selectedId,
+      targetId,
       targetName: target?.name ?? null,
       targetGender: target?.gender ?? playerGenderFromAvatarId(target?.avatarId),
-      success: isDoctorDefended,
+      success: isDoctorDefended && doctorSave.selectedId === targetId,
+    });
+  } else if (doctorActor) {
+    activeEvents.push({
+      event: 'DOCTOR_IDLE',
+      actorId: doctorActor.id,
+      targetId: null,
+      targetName: null,
+      targetGender: null,
     });
   }
 
   const reporterActor = playersOf(nextRoom).find(
     (p) =>
-      p.isAlive &&
       p.role === 'REPORTER' &&
-      Boolean(p.nightTarget) &&
+      p.isAlive &&
       !deadPlayerIds.includes(p.id) &&
+      Boolean(p.nightTarget) &&
       p.nightTarget === reporter.targetId,
   );
   if (reporterActor && reporter.news && reporter.targetId) {
@@ -260,6 +267,17 @@ export function resolveNight(
       targetName: target?.name ?? null,
       targetGender: target?.gender ?? playerGenderFromAvatarId(target?.avatarId),
     });
+  } else {
+    const reporterPlayer = playersOf(nextRoom).find((p) => p.role === 'REPORTER');
+    if (reporterPlayer) {
+      activeEvents.push({
+        event: 'REPORTER_IDLE',
+        actorId: reporterPlayer.id,
+        targetId: null,
+        targetName: null,
+        targetGender: null,
+      });
+    }
   }
 
   const morningEvents = activeEvents.map(({ event }) => event);
@@ -340,6 +358,7 @@ export function resolveNight(
     ...nextRoom,
     players: nextPlayers,
     nightResults,
+    morningRevealIndex: 0,
     currentHint: quizHint ?? nextRoom.currentHint ?? null,
     gameState: 'RESULT',
     votes: {},
@@ -402,8 +421,27 @@ export function dismissMorningResult(room: GameRoom): GameRoom {
   return evaluateGameEnd({
     ...room,
     gameState: 'DAY_TALK',
+    morningRevealIndex: 0,
     gmEvent: room.gmEvent === 'REVIVE_NIGHT' ? 'REVIVE_NIGHT' : null,
   });
+}
+
+/**
+ * 교사 수동 — 아침 공개 큐를 한 단계 진행 (사망자 → 의사 → 기자).
+ * 이미 마지막이면 변경 없음.
+ */
+export function advanceMorningReveal(room: GameRoom): GameRoom {
+  if (room.gameState !== 'RESULT') return room;
+  const events = room.nightResults?.activeEvents ?? [];
+  const legacyCount = room.nightResults?.morningEvents?.length ?? 0;
+  const total = Math.max(events.length, legacyCount, 0);
+  if (total <= 0) return room;
+  const current = Math.max(0, room.morningRevealIndex ?? 0);
+  if (current >= total - 1) return room;
+  return {
+    ...room,
+    morningRevealIndex: current + 1,
+  };
 }
 
 export function hasAliveSpiritualist(room: GameRoom): boolean {

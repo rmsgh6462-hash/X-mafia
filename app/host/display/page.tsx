@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import GameBackground, { type BackgroundPhase } from '@/components/GameBackground';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
+import { NewspaperArticleModal } from '@/components/play/NewspaperArticleModal';
 import {
   getDoctorRescueImage,
   getActiveMorningEvents,
@@ -103,7 +104,11 @@ function toPublicRoom(source: GameRoom): GameRoom {
         ...source.nightResults,
         activeEvents: source.nightResults.activeEvents?.map((event) => ({
           event: event.event,
-          actorId: null,
+          // 미행동 연출은 해당 캐릭터를 보여줘야 하므로 actorId만 공개한다.
+          actorId:
+            event.event === 'DOCTOR_IDLE' || event.event === 'REPORTER_IDLE'
+              ? event.actorId
+              : null,
           targetId: event.targetId,
           targetName: event.targetName ?? null,
           targetGender: event.targetGender ?? null,
@@ -183,8 +188,11 @@ function fallbackPublicMorningEvents(
 
   return getMorningEvents(result).map((event) => {
     const deadPlayerIds = result.deadPlayerIds ?? [];
+    const isIdle = event === 'DOCTOR_IDLE' || event === 'REPORTER_IDLE';
     const targetId =
-      event === 'DOCTOR_DEFEND'
+      isIdle
+        ? null
+        : event === 'DOCTOR_DEFEND'
         ? result.doctorSavedPlayerId ?? null
         : event === 'REPORTER_NEWS'
           ? result.reporterTargetId ?? null
@@ -272,12 +280,12 @@ function PublicStats({ room }: { room: GameRoom }) {
 function stageHeadline(state: GameState): string {
   if (state === 'NIGHT') return '밤이 되었습니다.';
   if (state === 'RESULT') return '아침이 되었습니다.';
+  if (state === 'DAY_VOTE') return '투표 시간입니다.';
   if (state === 'VOTE_RESULT') return '투표 결과를 발표합니다.';
   if (
     state === 'DAY_TALK' ||
     state === 'DAY_MATCH' ||
-    state === 'DAY_MISSION' ||
-    state === 'DAY_VOTE'
+    state === 'DAY_MISSION'
   ) {
     return '낮이 되었습니다.';
   }
@@ -398,8 +406,22 @@ function PublicMorningEvent({
         className={`morning-panel-shake relative w-full max-w-6xl overflow-hidden rounded-[2rem] border border-red-300/35 bg-[#0a0816]/85 text-white shadow-2xl shadow-red-950/60 ${wasKilled ? 'morning-dead-reveal' : ''}`}
       >
         <div className="absolute inset-x-0 top-0 h-2 bg-gradient-to-r from-red-700 via-rose-300 to-red-700" />
-        <div className="grid items-center gap-8 p-6 sm:p-10 lg:grid-cols-[1.25fr_1fr] lg:p-14">
+        <div className="pointer-events-none absolute left-[12%] top-[12%] h-24 w-24 rounded-full bg-slate-100/15 blur-[1px] sm:h-36 sm:w-36" />
+        <motion.div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-[-12%] bottom-0 h-1/2 bg-gradient-to-t from-slate-100/10 via-slate-300/5 to-transparent blur-2xl"
+          animate={{ x: ['-4%', '4%', '-4%'], opacity: [0.35, 0.7, 0.35] }}
+          transition={{ duration: 5.5, repeat: Infinity, ease: 'easeInOut' }}
+        />
+        <div className="relative z-10 grid items-center gap-8 p-6 sm:p-10 lg:grid-cols-[1.25fr_1fr] lg:p-14">
           <div className="relative flex h-64 items-center justify-center overflow-hidden rounded-3xl border border-red-200/25 bg-[radial-gradient(circle_at_50%_45%,rgba(127,29,29,0.85),rgba(11,10,25,0.92)_70%)] shadow-2xl shadow-red-950/50 sm:h-[25rem]">
+            <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_top,rgba(2,6,23,.88),transparent_62%),radial-gradient(circle_at_50%_22%,rgba(148,163,184,.16),transparent_32%)]" />
+            <motion.div
+              aria-hidden="true"
+              className="pointer-events-none absolute -inset-x-12 bottom-0 h-1/3 bg-slate-300/10 blur-xl"
+              animate={{ x: ['-8%', '8%', '-8%'], opacity: [0.2, 0.55, 0.2] }}
+              transition={{ duration: 4.2, repeat: Infinity, ease: 'easeInOut' }}
+            />
             <CharacterAvatar
               avatarId={target?.avatarId}
               isAlive={!wasKilled}
@@ -431,6 +453,17 @@ function PublicMorningEvent({
           </div>
         </div>
       </motion.section>
+    );
+  }
+
+  if (event.event === 'DOCTOR_IDLE' || event.event === 'REPORTER_IDLE') {
+    return (
+      <PublicRoleIdle
+        event={event}
+        room={room}
+        avatarSize={avatarSize}
+        role={event.event === 'DOCTOR_IDLE' ? 'DOCTOR' : 'REPORTER'}
+      />
     );
   }
 
@@ -543,57 +576,89 @@ function PublicMorningEvent({
   }
 
   const reporterRole = room.nightResults?.reporterTargetRole ?? null;
-  const roleLabel = reporterRole ? ROLE_LABELS[reporterRole] : '확인된 직업';
+  return (
+    <NewspaperArticleModal
+      targetName={targetName}
+      role={reporterRole}
+      targetAvatarId={target?.avatarId}
+      displayMode
+      hideActions
+      playSound={false}
+    />
+  );
+}
+
+function PublicRoleIdle({
+  event,
+  room,
+  avatarSize,
+  role,
+}: {
+  event: ActiveMorningEvent;
+  room: GameRoom;
+  avatarSize: number;
+  role: 'DOCTOR' | 'REPORTER';
+}) {
+  const actor = event.actorId ? room.players[event.actorId] : null;
+  const isDoctor = role === 'DOCTOR';
+  const title = isDoctor
+    ? '의사가 밤새 조용히 밤을 보냈습니다.'
+    : '기자가 밤새 조용히 밤을 보냈습니다.';
+  const message = isDoctor
+    ? '치료 대상을 정하지 못해 오늘 밤은 아무도 치료하지 않았습니다.'
+    : '취재 대상을 정하지 못해 오늘 밤은 특종을 찾지 못했습니다.';
 
   return (
     <motion.section
-      key="public-reporter-news"
-      initial={{ opacity: 0, y: -24, rotate: -1.5, scale: 0.94 }}
-      animate={{ opacity: 1, y: 0, rotate: 0, scale: 1 }}
-        className="relative min-h-[58vh] w-full max-w-7xl overflow-hidden rounded-[0.5rem] border-[8px] border-[#6f211b] bg-[#ead9b7] text-[#2b2017] shadow-2xl shadow-black/70"
+      key={`public-${event.event}`}
+      initial={{ opacity: 0, scale: 0.92, y: 24 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      className={`relative min-h-[58vh] w-full max-w-7xl overflow-hidden rounded-[2rem] border text-white shadow-2xl ${
+        isDoctor
+          ? 'border-emerald-300/35 bg-[#071c1b]/95 shadow-emerald-950/70'
+          : 'border-amber-200/35 bg-[#21160d]/95 shadow-amber-950/70'
+      }`}
     >
-      <motion.div
+      <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 opacity-40"
-        animate={{ backgroundPosition: ['0% 0%', '15% 8%', '-10% 14%', '0% 0%'] }}
-        transition={{ duration: 6, repeat: Infinity, ease: 'linear' }}
-        style={{
-          backgroundImage:
-            'radial-gradient(circle at 18% 22%, rgba(93,54,24,.3) 0 1px, transparent 1.5px), repeating-linear-gradient(8deg, rgba(102,65,31,.1) 0 1px, transparent 1px 7px)',
-          backgroundSize: '17px 19px, 100% 100%',
-        }}
+        className={`pointer-events-none absolute inset-0 ${
+          isDoctor
+            ? 'bg-[radial-gradient(circle_at_30%_30%,rgba(52,211,153,.25),transparent_42%),linear-gradient(135deg,rgba(14,116,144,.24),transparent_60%)]'
+            : 'bg-[radial-gradient(circle_at_30%_30%,rgba(251,191,36,.24),transparent_42%),linear-gradient(135deg,rgba(146,64,14,.28),transparent_60%)]'
+        }`}
       />
-      <div className="relative border-b-4 border-[#6f211b] bg-[#8d2b20] px-6 py-5 text-center text-[#fff6dc] sm:px-10">
-        <p className="flex items-center justify-center gap-3 text-lg font-black tracking-[0.25em] sm:text-2xl">
-          <Radio className="h-6 w-6 animate-pulse" />
-          X-마피아 신문 특보 · EXTRA EDITION
-          <Radio className="h-6 w-6 animate-pulse" />
-        </p>
-      </div>
-        <div className="relative px-6 py-8 text-center sm:px-12 sm:py-12 lg:py-14">
-        <p className="text-sm font-black uppercase tracking-[0.3em] text-[#8d2b20] sm:text-lg">
-          REPORTER&apos;S EXCLUSIVE · 전원 공개
-        </p>
-        <h1 className="mt-5 text-balance font-serif text-4xl font-black leading-none sm:text-7xl">
-          {targetName}의 충격적 정체 밝혀져!
-        </h1>
-        <div className="mx-auto mt-8 grid max-w-3xl items-center gap-7 border-y-4 border-double border-[#2b2017]/80 py-7 sm:grid-cols-[14rem_1fr] sm:text-left">
-          <div className="mx-auto w-44 border-[5px] border-[#d7bd8c] bg-[#d7bd8c] p-2 shadow-xl sm:w-56">
-            <CharacterAvatar
-              avatarId={target?.avatarId}
-              isAlive
-              state={getCharacterStateForRole(reporterRole)}
-              size={Math.max(220, Math.round(avatarSize * 0.56))}
-              className="mx-auto"
-            />
-          </div>
-          <div>
-            <p className="text-xl font-bold text-[#594431] sm:text-2xl">{targetName} 님의 진짜 직업은</p>
-            <p className="mt-2 font-serif text-5xl font-black text-[#8d2b20] sm:text-7xl">{roleLabel}</p>
-            <p className="mt-2 text-xl font-bold text-[#594431] sm:text-2xl">인 것으로 확인되었습니다.</p>
-          </div>
+      <div className="relative grid min-h-[58vh] items-center gap-8 p-6 sm:p-10 lg:grid-cols-[1.05fr_1fr] lg:p-14">
+        <div className={`relative flex min-h-[42vh] items-center justify-center overflow-hidden rounded-3xl border ${isDoctor ? 'border-emerald-200/25 bg-emerald-950/60' : 'border-amber-200/25 bg-amber-950/55'}`}>
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_35%,rgba(255,255,255,.12),transparent_38%),linear-gradient(to_top,rgba(2,6,23,.8),transparent_65%)]" />
+          <motion.div
+            aria-hidden="true"
+            className={`pointer-events-none absolute -inset-x-20 bottom-0 h-1/2 blur-2xl ${isDoctor ? 'bg-emerald-300/10' : 'bg-amber-200/10'}`}
+            animate={{ x: ['-6%', '6%', '-6%'], opacity: [0.35, 0.7, 0.35] }}
+            transition={{ duration: 4.5, repeat: Infinity, ease: 'easeInOut' }}
+          />
+          <CharacterAvatar
+            avatarId={actor?.avatarId ?? 'M0'}
+            isAlive={actor?.isAlive ?? true}
+            state={isDoctor ? 'doctor_idle' : 'reporter_idle'}
+            size={Math.max(240, Math.round(avatarSize * 0.72))}
+            className="relative z-10"
+          />
         </div>
-        <p className="text-sm font-black text-[#6f211b]/75 sm:text-base">특종 제보 · 기자단 · 본 특보는 모든 참가자에게 공개됩니다.</p>
+        <div className="relative text-center lg:text-left">
+          <div className={`flex items-center justify-center gap-3 text-sm font-black uppercase tracking-[0.3em] lg:justify-start sm:text-lg ${isDoctor ? 'text-emerald-200' : 'text-amber-200'}`}>
+            {isDoctor ? <HeartPulse className="h-7 w-7" /> : <Radio className="h-7 w-7" />}
+            {isDoctor ? 'Doctor Night Log' : 'Reporter Night Log'}
+          </div>
+          <h1 className="mt-6 text-balance text-4xl font-black leading-tight sm:text-6xl">
+            {title}
+          </h1>
+          <p className="mt-5 text-lg font-bold leading-relaxed text-white/75 sm:text-2xl">
+            {message}
+          </p>
+          <p className={`mt-6 inline-flex rounded-full px-5 py-3 text-base font-black ring-1 sm:text-xl ${isDoctor ? 'bg-emerald-400/10 text-emerald-100 ring-emerald-200/25' : 'bg-amber-400/10 text-amber-100 ring-amber-200/25'}`}>
+            다음 밤에는 다시 능력을 사용할 수 있습니다.
+          </p>
+        </div>
       </div>
     </motion.section>
   );
@@ -758,6 +823,9 @@ function PublicVoteResult({
       <div className="pointer-events-none absolute inset-0 opacity-35 [background-image:repeating-linear-gradient(90deg,transparent_0,transparent_10%,rgba(248,113,113,0.3)_10.3%,transparent_10.7%,transparent_20%)]" />
       <div className="relative grid min-h-[58vh] items-center gap-8 p-6 sm:p-10 lg:grid-cols-[1.2fr_1fr] lg:p-14">
         <div className="relative flex min-h-[50vh] items-center justify-center overflow-hidden rounded-3xl border border-amber-200/25 bg-[radial-gradient(circle_at_50%_38%,rgba(180,83,9,0.48),rgba(15,23,42,0.94)_70%)] shadow-2xl shadow-black/60">
+          <div className="pointer-events-none absolute inset-0 z-20 bg-[repeating-linear-gradient(90deg,transparent_0,transparent_8%,rgba(226,232,240,.03)_8.3%,rgba(226,232,240,.55)_8.8%,rgba(15,23,42,.92)_9.5%,transparent_10.6%,transparent_20%)] opacity-90" />
+          <div className="pointer-events-none absolute inset-0 z-20 bg-[repeating-linear-gradient(0deg,transparent_0,transparent_18%,rgba(15,23,42,.48)_19%,transparent_20%)] opacity-70" />
+          <div className="pointer-events-none absolute inset-x-[18%] top-[-12%] z-10 h-2/3 rounded-full bg-amber-100/25 blur-3xl" />
           <div className="pointer-events-none absolute inset-0 opacity-55 [background-image:repeating-linear-gradient(90deg,transparent_0,transparent_13%,rgba(226,232,240,0.22)_13.5%,rgba(226,232,240,0.22)_14%,transparent_14.5%,transparent_27%)]" />
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/75 to-transparent" />
           {eliminated ? (
@@ -775,7 +843,7 @@ function PublicVoteResult({
           ) : (
             <Skull className="relative z-10 h-40 w-40 text-amber-200/75 sm:h-56 sm:w-56" />
           )}
-          <div className="absolute bottom-5 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/75 px-5 py-2 text-lg font-black text-amber-100 ring-1 ring-amber-200/35 sm:text-2xl">
+          <div className="absolute bottom-5 left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/80 px-5 py-2 text-lg font-black text-amber-100 ring-1 ring-amber-200/35 sm:text-2xl">
             {eliminated?.name ?? '체포된 학생 없음'}
           </div>
         </div>
@@ -790,10 +858,9 @@ function PublicVoteResult({
             {eliminated ? '투표 체포 결과' : '투표 결과 발표'}
           </h1>
           <p className="mt-6 text-2xl font-black leading-relaxed text-white sm:text-4xl">
-            {result.announcement ??
-              (eliminated
-                ? `${eliminated.name} 님이 투표로 체포되었습니다.`
-                : '이번 투표에서 체포된 학생은 없습니다.')}
+            {eliminated
+              ? `투표 결과, ${eliminated.name} 님이 체포되어 감옥에 수감되었습니다.`
+              : result.announcement ?? '이번 투표에서 체포된 학생은 없습니다.'}
           </p>
           {canRevealIdentity && result.eliminatedRole && identityStep !== 'NONE' && (
             <motion.div
@@ -877,7 +944,6 @@ export default function HostDisplayPage() {
   const [room, setRoom] = useState<GameRoom | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const [morningIndex, setMorningIndex] = useState(0);
   const [morningIdentityStep, setMorningIdentityStep] =
     useState<IdentityRevealStep>('NONE');
   const [displayAvatarSize, setDisplayAvatarSize] = useState(520);
@@ -951,6 +1017,10 @@ export default function HostDisplayPage() {
     ].join('|'),
     [morningEvents, room?.currentRound, room?.gameState, room?.nightResults?.deadPlayerIds, room?.roomId],
   );
+  const morningIndex = Math.min(
+    Math.max(0, room?.morningRevealIndex ?? 0),
+    Math.max(0, morningEvents.length - 1),
+  );
   const currentMorningEvent = morningEvents[morningIndex] ?? null;
   const showMorningSequence = room?.gameState === 'RESULT' && Boolean(currentMorningEvent);
   const showVoteResult =
@@ -958,11 +1028,10 @@ export default function HostDisplayPage() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setMorningIndex(0);
       setMorningIdentityStep('NONE');
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [morningKey]);
+  }, [morningKey, morningIndex]);
 
   useEffect(() => {
     if (room?.gameState !== 'RESULT' || !currentMorningEvent) return;
@@ -991,20 +1060,9 @@ export default function HostDisplayPage() {
       return () => window.clearTimeout(timer);
     }
 
-    const duration =
-      canRevealIdentity && morningIdentityStep === 'REVEAL_FULL_ROLE'
-        ? 2500
-        : 2600;
-    const timer = window.setTimeout(() => {
-      setMorningIdentityStep('NONE');
-      setMorningIndex((index) =>
-        index + 1 < morningEvents.length ? index + 1 : morningEvents.length,
-      );
-    }, duration);
-    return () => window.clearTimeout(timer);
+    // 다음 공개(의사·기자)는 교사가 다음을 누를 때만 진행한다.
   }, [
     currentMorningEvent,
-    morningEvents.length,
     morningIdentityStep,
     morningKey,
     room?.gameState,

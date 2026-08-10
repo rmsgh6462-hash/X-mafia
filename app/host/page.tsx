@@ -59,6 +59,7 @@ import {
 } from '@/lib/game/audio';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import {
+  advanceMorningReveal,
   dismissMorningResult,
   hasAliveSpiritualist,
   resolveNight,
@@ -67,10 +68,7 @@ import {
 import {
   alivePlayers,
   assignMafiaMission,
-  assignRolesByCounts,
-  assignRolesByCountsAndStart,
   assignRolesFixedThenRandom,
-  assignRolesManual,
   createEmptyRoom,
   deleteRoom,
   dismissDayVoteResult,
@@ -87,14 +85,14 @@ import {
   VOTE_RESULT_DURATION_MS,
   resolveMafiaMissionState,
   restartGameRoom,
+  saveManualRoleAssignments,
   savePendingNightQuizConfig,
+  saveRoleSetup,
   saveRoom,
   setVoteTieResolution,
   setRevealDeathRoles,
   setAllowMafiaTargetMafia,
   setMafiaChatEnabled,
-  setMaxRounds,
-  startAssignedGame,
   startGamePreferringAssignedRoles,
   startMatchPhase,
   startVotePhase,
@@ -299,6 +297,9 @@ export default function HostPage() {
               players: mergedPlayers,
               pendingRoleAssignments:
                 local.pendingRoleAssignments ?? remote.pendingRoleAssignments,
+              roleCountConfig:
+                local.roleCountConfig ?? remote.roleCountConfig,
+              maxRounds: local.maxRounds || remote.maxRounds,
             };
             roomStateRef.current = merged;
             setRoom(merged);
@@ -872,53 +873,30 @@ export default function HostPage() {
                   <RoleAssignPanel
                     room={room}
                     busy={busy}
-                    onRandomAssign={(counts, startNow, rounds) => {
-                      if (startNow) {
-                        void runAction(
-                          (r) =>
-                            assignRolesByCountsAndStart(
-                              setMaxRounds(r, rounds),
-                              counts,
-                            ),
-                          4,
-                        );
-                        speak('직업을 배정하고 게임을 시작합니다.');
-                      } else {
-                        void runAction((r) =>
-                          assignRolesByCounts(setMaxRounds(r, rounds), counts),
-                        );
-                        speak('직업을 랜덤 배정했습니다.');
-                      }
+                    onSaveSetup={(counts, rounds, options) => {
+                      void runAction((r) =>
+                        saveRoleSetup(r, counts, rounds, options),
+                      );
                     }}
-                    onManualAssign={(assignments, counts, fillRandom) => {
-                      if (fillRandom) {
-                        void runAction((r) =>
-                          assignRolesFixedThenRandom(
-                            setMaxRounds(r, r.maxRounds),
-                            assignments,
-                            counts,
-                          ),
-                        );
-                        speak('수동 지정과 남은 직업을 랜덤 배정했습니다.');
-                      } else {
-                        void runAction((r) =>
-                          assignRolesManual(r, assignments),
-                        );
-                        speak('수동 직업 배정을 저장했습니다.');
-                      }
-                    }}
-                    onStart={(rounds, assignments, counts) => {
-                      void runAction((r) => {
-                        const withRoles = assignRolesFixedThenRandom(
+                    onSaveAssignments={(assignments, counts, rounds) => {
+                      void runAction((r) =>
+                        saveManualRoleAssignments(
                           r,
                           assignments,
                           counts,
-                        );
-                        return startAssignedGame(
-                          setMaxRounds(withRoles, rounds),
-                        );
-                      }, 4);
-                      speak('직업을 배정하고 게임을 시작합니다.');
+                          rounds,
+                        ),
+                      );
+                    }}
+                    onFillUnassigned={(assignments, counts, rounds) => {
+                      void runAction((r) =>
+                        assignRolesFixedThenRandom(
+                          saveRoleSetup(r, counts, rounds),
+                          assignments,
+                          counts,
+                        ),
+                      );
+                      speak('미배정 학생에게 직업을 랜덤 배정했습니다.');
                     }}
                   />
                 </div>
@@ -1110,6 +1088,7 @@ export default function HostPage() {
                 voteTallies={voteTallies}
                 busy={busy}
                 onConfirmRevive={() => void runAction(resolveReviveVote)}
+                onAdvanceReveal={() => void runAction(advanceMorningReveal)}
                 onDismiss={() => void runAction(dismissMorningResult)}
               />
             ) : room.gameState === 'ENDED' ? (
@@ -1217,7 +1196,9 @@ export default function HostPage() {
                       speak(
                         assigned
                           ? '저장한 직업으로 게임을 시작합니다.'
-                          : '직업을 랜덤 배정하고 게임을 시작합니다.',
+                          : room?.roleCountConfig
+                            ? '설정한 인원에 맞게 직업을 배정하고 게임을 시작합니다.'
+                            : '직업을 랜덤 배정하고 게임을 시작합니다.',
                       );
                     }}
                     accent="amber"
@@ -1492,6 +1473,7 @@ export default function HostPage() {
             result={room.nightResults}
             players={room.players}
             revealRoles={room.revealDeathRoles !== false}
+            controlledIndex={room.morningRevealIndex ?? 0}
             onClose={() => setMorningSequenceOpen(false)}
           />
         )}
@@ -1606,6 +1588,7 @@ function MorningResultStage({
   voteTallies,
   busy,
   onConfirmRevive,
+  onAdvanceReveal,
   onDismiss,
 }: {
   room: GameRoom;
@@ -1613,6 +1596,7 @@ function MorningResultStage({
   voteTallies: Record<string, number>;
   busy: boolean;
   onConfirmRevive: () => void;
+  onAdvanceReveal: () => void;
   onDismiss: () => void;
 }) {
   const nr = room.nightResults;
@@ -1627,6 +1611,26 @@ function MorningResultStage({
   const quizRate = nr?.quizSuccessRate;
   const quizOutcome = nr?.quizOutcome;
   const actionLog = nr?.actionLog ?? [];
+  const revealQueue = getActiveMorningEvents(nr);
+  const revealTotal = revealQueue.length;
+  const revealIndex = Math.min(
+    Math.max(0, room.morningRevealIndex ?? 0),
+    Math.max(0, revealTotal - 1),
+  );
+  const currentReveal = revealQueue[revealIndex] ?? null;
+  const canAdvanceReveal = revealTotal > 0 && revealIndex < revealTotal - 1;
+  const revealStepLabel =
+    currentReveal?.event === 'MAFIA_KILL'
+      ? '사망자 공개'
+      : currentReveal?.event === 'DOCTOR_DEFEND'
+        ? '의사 활약 공개'
+        : currentReveal?.event === 'DOCTOR_IDLE'
+          ? '의사 미행동 공개'
+        : currentReveal?.event === 'REPORTER_NEWS'
+          ? '기자 취재 공개'
+          : currentReveal?.event === 'REPORTER_IDLE'
+            ? '기자 미행동 공개'
+          : null;
 
   const actionRows = actionLog
     .filter((entry) => entry.role !== 'CITIZEN')
@@ -1939,7 +1943,28 @@ function MorningResultStage({
         )}
 
         {!revivePending && (
-          <div className="text-center">
+          <div className="space-y-3 text-center">
+            {revealTotal > 0 && (
+              <div className="rounded-2xl bg-amber-400/10 px-4 py-4 ring-1 ring-amber-300/25">
+                <p className="text-xs font-black uppercase tracking-wider text-amber-200/80">
+                  서브모니터 · 아침 공개
+                </p>
+                <p className="mt-1 text-base font-black text-white">
+                  {revealStepLabel ?? '공개'} ({revealIndex + 1}/{revealTotal})
+                </p>
+                <p className="mt-1 text-xs text-white/55">
+                  자동으로 넘어가지 않습니다. 다음을 눌러 공개를 진행하세요.
+                </p>
+                <button
+                  type="button"
+                  disabled={busy || !canAdvanceReveal}
+                  onClick={onAdvanceReveal}
+                  className="mt-3 rounded-xl bg-amber-400 px-6 py-3 text-sm font-black text-stone-900 hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {canAdvanceReveal ? '다음 공개' : '마지막 공개 중'}
+                </button>
+              </div>
+            )}
             <button
               type="button"
               disabled={busy}

@@ -10,6 +10,8 @@ export type CharacterState =
   | 'mafia'
   | 'shaman'
   | 'doctor_fail'
+  | 'doctor_idle'
+  | 'reporter_idle'
   | 'dead'
   | 'arrested';
 
@@ -21,6 +23,8 @@ export const CHARACTER_STATES: CharacterState[] = [
   'mafia',
   'shaman',
   'doctor_fail',
+  'doctor_idle',
+  'reporter_idle',
   'dead',
   'arrested',
 ];

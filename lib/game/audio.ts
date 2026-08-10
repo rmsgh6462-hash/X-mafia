@@ -282,6 +282,10 @@ export async function playMorningEventSound(
         { freq: 920, offset: 0.48, duration: 0.035, type: 'square' },
         { freq: 1040, offset: 0.55, duration: 0.035, type: 'square' },
       ],
+      REPORTER_IDLE: [
+        { freq: 460, offset: 0, duration: 0.16, type: 'triangle' },
+        { freq: 360, offset: 0.18, duration: 0.22, type: 'triangle' },
+      ],
       MAFIA_KILL: [
         { freq: 120, offset: 0, duration: 0.24, type: 'sawtooth' },
         { freq: 78, offset: 0.06, duration: 0.3, type: 'sine' },
@@ -289,6 +293,10 @@ export async function playMorningEventSound(
       DOCTOR_DEFEND: [
         { freq: 392, offset: 0, duration: 0.18, type: 'triangle' },
         { freq: 523, offset: 0.12, duration: 0.24, type: 'triangle' },
+      ],
+      DOCTOR_IDLE: [
+        { freq: 540, offset: 0, duration: 0.12, type: 'sine' },
+        { freq: 420, offset: 0.16, duration: 0.22, type: 'sine' },
       ],
     };
 

@@ -23,6 +23,8 @@ const PUBLIC_EVENT_STATES: CharacterState[] = [
   'dead',
   'arrested',
   'doctor_fail',
+  'doctor_idle',
+  'reporter_idle',
 ];
 
 function AvatarFace({
@@ -60,7 +62,8 @@ function AvatarFace({
     role != null &&
     (revealRole ||
       (viewerRole !== undefined && targetPlayerId !== undefined));
-  const securedImageUrl = hasViewerContext
+  const canUseSecuredRoleImage = !PUBLIC_EVENT_STATES.includes(state ?? 'normal');
+  const securedImageUrl = hasViewerContext && canUseSecuredRoleImage
     ? getSecuredCharacterImageUrl(
         def.id,
         role,

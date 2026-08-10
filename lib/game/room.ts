@@ -71,6 +71,7 @@ export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
     missionOutcome: null,
     currentHint: null,
     nightResults: null,
+    morningRevealIndex: 0,
     gmEvent: null,
     votes: {},
     matchEndsAt: null,
@@ -94,6 +95,7 @@ export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
     ghostPredictions: {},
     nicknameChangeRequest: null,
     pendingRoleAssignments: null,
+    roleCountConfig: null,
   };
 }
 
@@ -323,6 +325,7 @@ export function normalizeGameRoom(room: GameRoom): GameRoom {
     missionOutcome: room.missionOutcome ?? null,
     currentHint: room.currentHint ?? null,
     nightResults: room.nightResults ?? null,
+    morningRevealIndex: Math.max(0, room.morningRevealIndex ?? 0),
     gmEvent: room.gmEvent ?? null,
     votes: room.votes ?? {},
     matchEndsAt: room.matchEndsAt ?? null,
@@ -349,6 +352,22 @@ export function normalizeGameRoom(room: GameRoom): GameRoom {
     pendingRoleAssignments: normalizePendingRoleAssignments(
       room.pendingRoleAssignments,
     ),
+    roleCountConfig: normalizeRoleCountConfig(room.roleCountConfig),
+  };
+}
+
+function normalizeRoleCountConfig(
+  raw: GameRoom['roleCountConfig'] | null | undefined,
+): GameRoom['roleCountConfig'] {
+  if (!raw || typeof raw !== 'object') return null;
+  const clamp = (n: unknown) =>
+    Math.max(0, Math.min(99, Math.floor(Number(n) || 0)));
+  return {
+    MAFIA: clamp(raw.MAFIA),
+    DOCTOR: clamp(raw.DOCTOR),
+    POLICE: clamp(raw.POLICE),
+    REPORTER: clamp(raw.REPORTER),
+    SPIRITUALIST: clamp(raw.SPIRITUALIST),
   };
 }
 
@@ -567,6 +586,51 @@ export function assignRolesAndStart(room: GameRoom): GameRoom {
   return startGameWithRoles(room, buildRoleDeck(playerList(room).length));
 }
 
+/** 직업 인원·라운드만 저장 (대기 유지). clearPending 시 미리보기 배정 제거 */
+export function saveRoleSetup(
+  room: GameRoom,
+  counts: RoleCountConfig,
+  maxRounds: number,
+  options?: { clearPending?: boolean },
+): GameRoom {
+  return {
+    ...room,
+    roleCountConfig: counts,
+    maxRounds: Math.max(1, Math.min(30, Math.floor(maxRounds) || 1)),
+    pendingRoleAssignments: options?.clearPending
+      ? null
+      : room.pendingRoleAssignments,
+  };
+}
+
+/**
+ * 직접 배정 맵 전체를 pending 에 저장 (미배정은 null).
+ * 학생 role 은 비공개 유지.
+ */
+export function saveManualRoleAssignments(
+  room: GameRoom,
+  assignments: Record<string, Role | null>,
+  counts: RoleCountConfig,
+  maxRounds: number,
+): GameRoom {
+  const pending: Record<string, Role | null> = {};
+  const nextPlayers: Record<string, Player> = {};
+  playerList(room).forEach((p) => {
+    pending[p.id] = assignments[p.id] ?? null;
+    nextPlayers[p.id] = {
+      ...p,
+      role: null,
+    };
+  });
+  return {
+    ...room,
+    players: { ...room.players, ...nextPlayers },
+    pendingRoleAssignments: pending,
+    roleCountConfig: counts,
+    maxRounds: Math.max(1, Math.min(30, Math.floor(maxRounds) || 1)),
+  };
+}
+
 /** 인원수 지정 랜덤 배정만 수행 (대기 유지 — 교사 확인용, 학생 role 비공개) */
 export function assignRolesByCounts(
   room: GameRoom,
@@ -652,6 +716,7 @@ export function assignRolesFixedThenRandom(
     ...room,
     players: nextPlayers,
     pendingRoleAssignments: resolved,
+    roleCountConfig: counts,
   };
 }
 
@@ -716,6 +781,7 @@ export function startAssignedGame(room: GameRoom): GameRoom {
 
 /**
  * 하단 '게임 시작'용: 전원 직업+마피아가 이미 배정돼 있으면 그대로 시작하고,
+ * roleCountConfig 가 있으면 미배정을 그 인원에 맞게 채운 뒤 시작,
  * 아니면 기본 랜덤 배정으로 시작한다.
  */
 export function startGamePreferringAssignedRoles(room: GameRoom): GameRoom {
@@ -729,6 +795,16 @@ export function startGamePreferringAssignedRoles(room: GameRoom): GameRoom {
   if (allAssigned && hasMafia) {
     return startAssignedGame(room);
   }
+
+  const counts = room.roleCountConfig;
+  if (counts) {
+    const fixed: Record<string, Role | null> = {};
+    players.forEach((p) => {
+      fixed[p.id] = roleOf(p.id);
+    });
+    return startAssignedGame(assignRolesFixedThenRandom(room, fixed, counts));
+  }
+
   return assignRolesAndStart(room);
 }
 
