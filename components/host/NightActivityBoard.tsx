@@ -185,6 +185,7 @@ function RoleActivityCard({
                 avatarId={actor.avatarId}
                 isAlive={actor.isAlive}
                 size={40}
+                previewOnHover
               />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-bold text-white">

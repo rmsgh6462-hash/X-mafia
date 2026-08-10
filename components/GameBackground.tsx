@@ -28,10 +28,8 @@ const SCENE_IMAGES: Record<SceneKey, { src: string; alt: string }> = {
 };
 
 function resolveSceneKey(gameState: BackgroundPhase): SceneKey {
-  // 아침 발표(RESULT) 때 낮 배경 PNG를 새로 디코딩하면 Electron 렌더러가 죽는 경우가 있어
-  // 밤·결과 단계는 같은 밤 배경을 유지하고, 낮 토론으로 넘어갈 때만 전환한다.
-  if (gameState === 'NIGHT' || gameState === 'RESULT') return 'VILLAGE_NIGHT';
-  return 'VILLAGE_DAY';
+  // 밤만 밤 배경, 아침 발표(RESULT)·낮·대기는 아침(낮) 배경
+  return gameState === 'NIGHT' ? 'VILLAGE_NIGHT' : 'VILLAGE_DAY';
 }
 
 function getOverlayClass(gameState: BackgroundPhase): string {
@@ -43,7 +41,7 @@ function getOverlayClass(gameState: BackgroundPhase): string {
     case 'NIGHT':
       return 'bg-gradient-to-b from-red-950/55 via-indigo-950/45 to-black/70';
     case 'RESULT':
-      return 'bg-gradient-to-b from-amber-900/35 via-black/30 to-black/65';
+      return 'bg-gradient-to-b from-amber-200/20 via-orange-100/10 to-amber-900/25';
     default:
       return 'bg-black/20';
   }
@@ -211,7 +209,7 @@ export default function GameBackground({
           animate={{ opacity: 1 }}
           style={{
             background:
-              'radial-gradient(ellipse at center, transparent 35%, rgba(0,0,0,0.65) 100%)',
+              'radial-gradient(ellipse at center, transparent 40%, rgba(120, 53, 15, 0.28) 100%)',
           }}
         />
       )}

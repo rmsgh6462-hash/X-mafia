@@ -108,6 +108,7 @@ function PlayerChip({
         avatarId={player.avatarId}
         isAlive={player.isAlive}
         size={compact ? 44 : 56}
+        previewOnHover
       />
       <span
         className={`mt-1 w-full truncate text-xs font-bold ${

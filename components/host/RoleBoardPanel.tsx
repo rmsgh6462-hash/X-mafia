@@ -88,6 +88,7 @@ export function RoleBoardPanel({
                           avatarId={p.avatarId}
                           isAlive={p.isAlive}
                           size={40}
+                          previewOnHover
                         />
                         <div className="min-w-0">
                           <p

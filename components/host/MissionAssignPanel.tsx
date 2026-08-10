@@ -551,7 +551,12 @@ export function NightQuizMonitor({
               className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-1.5"
             >
               <span className="inline-flex items-center gap-2 font-bold">
-                <CharacterAvatar avatarId={p.avatarId} size={24} isAlive />
+                <CharacterAvatar
+                  avatarId={p.avatarId}
+                  size={24}
+                  isAlive
+                  previewOnHover
+                />
                 {p.name}
               </span>
               {!sub ? (

@@ -187,11 +187,13 @@ export function MatchChatMonitor({
                       avatarId={a?.avatarId}
                       size={28}
                       isAlive={a?.isAlive ?? true}
+                      previewOnHover
                     />
                     <CharacterAvatar
                       avatarId={b?.avatarId}
                       size={28}
                       isAlive={b?.isAlive ?? true}
+                      previewOnHover
                     />
                   </div>
                   <div className="min-w-0 flex-1">

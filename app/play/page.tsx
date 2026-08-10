@@ -491,21 +491,15 @@ function PlayPageInner() {
 
           <div>
             <span className="mb-2 block text-xs font-semibold text-white/50">
-              학생 캐릭터 32명 선택 (선착순 · 중복 불가 · 남자 16 / 여자 16)
+              학생 캐릭터 선택 (성별 → 큰 화면에서 고르기 · 선착순 · 중복 불가)
             </span>
-            <div className="max-h-72 overflow-y-auto rounded-2xl border border-white/10 bg-black/20 p-3">
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
               <AvatarPickerGrid
                 selectedId={avatarId}
                 takenIds={lobbyTaken}
                 onSelect={setAvatarId}
               />
             </div>
-            {avatarId && (
-              <div className="mt-3 flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2">
-                <CharacterAvatar avatarId={avatarId} size={40} />
-                <span className="text-sm text-white/70">선택됨</span>
-              </div>
-            )}
           </div>
 
           {error && (
@@ -596,6 +590,7 @@ function PlayPageInner() {
             avatarId={me.avatarId}
             isAlive={me.isAlive}
             size={48}
+            previewOnHover
           />
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/45">
@@ -951,7 +946,12 @@ function VotePanel({
                   : 'bg-white/10 text-white'
             }`}
           >
-            <CharacterAvatar avatarId={p.avatarId} isAlive size={32} />
+            <CharacterAvatar
+              avatarId={p.avatarId}
+              isAlive
+              size={32}
+              previewOnHover
+            />
             <span className="truncate">{p.name}</span>
             {isAlly && (
               <span className="shrink-0 rounded bg-red-500 px-1 py-0.5 text-[9px] font-black text-white">

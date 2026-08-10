@@ -1,21 +1,22 @@
 import type { GameState, MorningEvent } from '@/types/game';
 import { playGunshotSound } from '@/lib/utils/sound';
 
-type PhaseTone = {
-  freqs: number[];
-  volume: number;
-  type: OscillatorType;
+type BgmBed = 'day' | 'night';
+
+const BGM_ASSETS: Record<BgmBed, string> = {
+  day: '/sounds/bgm-day.wav',
+  night: '/sounds/bgm-night.wav',
 };
 
-const PHASE_TONES: Partial<Record<GameState, PhaseTone>> = {
-  WAITING: { freqs: [196, 247], volume: 0.03, type: 'sine' },
-  DAY_TALK: { freqs: [262, 330, 392], volume: 0.035, type: 'sine' },
-  DAY_MATCH: { freqs: [294, 370], volume: 0.04, type: 'triangle' },
-  DAY_MISSION: { freqs: [220, 277, 330], volume: 0.04, type: 'sine' },
-  DAY_VOTE: { freqs: [185, 233], volume: 0.045, type: 'sawtooth' },
-  NIGHT: { freqs: [55, 82, 110], volume: 0.055, type: 'sine' },
-  RESULT: { freqs: [330, 415, 494], volume: 0.04, type: 'triangle' },
-  ENDED: { freqs: [196, 165], volume: 0.03, type: 'sine' },
+const STATE_TO_BED: Partial<Record<GameState, BgmBed>> = {
+  WAITING: 'day',
+  DAY_TALK: 'day',
+  DAY_MATCH: 'day',
+  DAY_MISSION: 'day',
+  DAY_VOTE: 'day',
+  RESULT: 'day',
+  NIGHT: 'night',
+  ENDED: 'day',
 };
 
 const TTS_SCRIPTS: Partial<Record<GameState, string>> = {
@@ -29,9 +30,23 @@ const TTS_SCRIPTS: Partial<Record<GameState, string>> = {
   ENDED: '게임이 종료되었습니다.',
 };
 
+const BGM_VOLUME: Record<BgmBed, number> = {
+  day: 0.42,
+  night: 0.48,
+};
+
+const CROSSFADE_MS = 1400;
+
 let audioCtx: AudioContext | null = null;
-let activeNodes: AudioNode[] = [];
 let currentState: GameState | null = null;
+let currentBed: BgmBed | null = null;
+let activeBedAudio: HTMLAudioElement | null = null;
+let fadingOut: HTMLAudioElement[] = [];
+/** 교사 화면에서 명시적으로 켠 뒤에만 단계 BGM을 재생한다. */
+let bgmEnabled = false;
+/** 교사 화면에서 명시적으로 끈 경우에만 효과음까지 막는다. 학생 기기는 기본이라 연출음이 난다. */
+let bgmForcedOff = false;
+let narrationEnabled = false;
 
 function getCtx(): AudioContext {
   if (!audioCtx) {
@@ -40,70 +55,156 @@ function getCtx(): AudioContext {
   return audioCtx;
 }
 
-function stopBgm() {
-  activeNodes.forEach((node) => {
-    try {
-      if ('stop' in node && typeof node.stop === 'function') {
-        node.stop();
-      }
-      node.disconnect();
-    } catch {
-      /* already stopped */
-    }
-  });
-  activeNodes = [];
-}
-
-/** GameState 변경 시 분위기 BGM 전환 (Web Audio 앰비언트) */
-export async function playPhaseBgm(state: GameState) {
-  if (typeof window === 'undefined') return;
-  if (currentState === state && activeNodes.length > 0) return;
-
+async function resumeCtx(): Promise<AudioContext> {
   const ctx = getCtx();
   if (ctx.state === 'suspended') {
     await ctx.resume();
   }
+  return ctx;
+}
 
-  stopBgm();
-  currentState = state;
+function bedForState(state: GameState): BgmBed {
+  return STATE_TO_BED[state] ?? 'day';
+}
 
-  const tone = PHASE_TONES[state];
-  if (!tone) return;
-
-  const master = ctx.createGain();
-  master.gain.value = 0;
-  master.connect(ctx.destination);
-  activeNodes.push(master);
-
-  // 페이드 인
-  master.gain.linearRampToValueAtTime(tone.volume, ctx.currentTime + 1.2);
-
-  tone.freqs.forEach((freq, i) => {
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = tone.type;
-    osc.frequency.value = freq;
-    gain.gain.value = 1 / tone.freqs.length;
-    // 밤: 약간의 떨림
-    if (state === 'NIGHT') {
-      const lfo = ctx.createOscillator();
-      const lfoGain = ctx.createGain();
-      lfo.frequency.value = 0.15 + i * 0.05;
-      lfoGain.gain.value = 4;
-      lfo.connect(lfoGain);
-      lfoGain.connect(osc.frequency);
-      lfo.start();
-      activeNodes.push(lfo, lfoGain);
-    }
-    osc.connect(gain);
-    gain.connect(master);
-    osc.start();
-    activeNodes.push(osc, gain);
+function fadeAudioVolume(
+  audio: HTMLAudioElement,
+  from: number,
+  to: number,
+  ms: number,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const started = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - started) / ms);
+      const curved = t * t * (3 - 2 * t);
+      audio.volume = Math.max(0, Math.min(1, from + (to - from) * curved));
+      if (t < 1) {
+        requestAnimationFrame(tick);
+      } else {
+        resolve();
+      }
+    };
+    requestAnimationFrame(tick);
   });
+}
+
+function stopBedAudio(audio: HTMLAudioElement | null) {
+  if (!audio) return;
+  try {
+    audio.pause();
+    audio.src = '';
+  } catch {
+    /* ignore */
+  }
+}
+
+function stopBgm() {
+  fadingOut.forEach(stopBedAudio);
+  fadingOut = [];
+  stopBedAudio(activeBedAudio);
+  activeBedAudio = null;
+  currentBed = null;
+}
+
+async function startBed(bed: BgmBed) {
+  if (currentBed === bed && activeBedAudio && !activeBedAudio.paused) {
+    return;
+  }
+
+  const next = new Audio(BGM_ASSETS[bed]);
+  next.loop = true;
+  next.preload = 'auto';
+  next.volume = 0;
+
+  const previous = activeBedAudio;
+  activeBedAudio = next;
+  currentBed = bed;
+
+  try {
+    await next.play();
+  } catch {
+    // 자동재생이 막히면 조용히 포기 (교사 토글 제스처 후 재시도됨)
+    if (activeBedAudio === next) {
+      activeBedAudio = null;
+      currentBed = null;
+    }
+    stopBedAudio(next);
+    return;
+  }
+
+  const target = BGM_VOLUME[bed];
+  void fadeAudioVolume(next, 0, target, CROSSFADE_MS);
+
+  if (previous) {
+    fadingOut.push(previous);
+    const from = previous.volume;
+    void fadeAudioVolume(previous, from, 0, CROSSFADE_MS).then(() => {
+      stopBedAudio(previous);
+      fadingOut = fadingOut.filter((a) => a !== previous);
+    });
+  }
+}
+
+export function isBgmEnabled(): boolean {
+  return bgmEnabled && !bgmForcedOff;
+}
+
+export function isNarrationEnabled(): boolean {
+  return narrationEnabled;
+}
+
+/** 배경음 켜기/끄기. 켜면 AudioContext를 깨우고 현재 단계 BGM을 재생한다. */
+export async function setBgmEnabled(
+  enabled: boolean,
+  state?: GameState | null,
+): Promise<void> {
+  bgmEnabled = enabled;
+  bgmForcedOff = !enabled;
+  if (!enabled) {
+    stopBgm();
+    currentState = null;
+    return;
+  }
+  await resumeCtx();
+  if (state) {
+    currentState = null;
+    currentBed = null;
+    await playPhaseBgm(state);
+  }
+}
+
+/** 나레이션(TTS) 켜기/끄기. 끄면 진행 중인 음성도 즉시 중단한다. */
+export async function setNarrationEnabled(enabled: boolean): Promise<void> {
+  narrationEnabled = enabled;
+  if (!enabled && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    window.speechSynthesis.cancel();
+    return;
+  }
+  if (enabled) {
+    await resumeCtx().catch(() => {
+      /* TTS만 쓸 때도 제스처로 컨텍스트를 열어 둔다 */
+    });
+  }
+}
+
+/** GameState 변경 시 분위기 BGM 전환 (아침·낮 = 새/물, 밤 = 까마귀) */
+export async function playPhaseBgm(state: GameState) {
+  if (typeof window === 'undefined') return;
+  if (!bgmEnabled || bgmForcedOff) return;
+  if (currentState === state && activeBedAudio && !activeBedAudio.paused) return;
+
+  await resumeCtx().catch(() => {
+    /* HTMLAudio만으로도 재생 가능 */
+  });
+
+  currentState = state;
+  await startBed(bedForState(state));
 }
 
 export function speakPhase(state: GameState, customText?: string) {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  if (!narrationEnabled) return;
 
   const text = customText ?? TTS_SCRIPTS[state];
   if (!text) return;
@@ -118,6 +219,7 @@ export function speakPhase(state: GameState, customText?: string) {
 
 export function speak(text: string) {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  if (!narrationEnabled) return;
   window.speechSynthesis.cancel();
   const utter = new SpeechSynthesisUtterance(text);
   utter.lang = 'ko-KR';
@@ -127,6 +229,7 @@ export function speak(text: string) {
 /** 아침 결과 팝업의 짧은 효과음. 브라우저 오디오 정책에 막혀도 게임은 계속 진행된다. */
 export async function playMorningEventSound(event: MorningEvent) {
   if (typeof window === 'undefined') return;
+  if (bgmForcedOff) return;
 
   if (event === 'MAFIA_KILL') {
     await playGunshotSound(0.52);
@@ -134,8 +237,7 @@ export async function playMorningEventSound(event: MorningEvent) {
   }
 
   try {
-    const ctx = getCtx();
-    if (ctx.state === 'suspended') await ctx.resume();
+    const ctx = await resumeCtx();
 
     const now = ctx.currentTime;
     const notes: Record<MorningEvent, { freq: number; offset: number; duration: number; type: OscillatorType }[]> = {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   Clock3,
@@ -17,8 +17,6 @@ import {
   Swords,
   Trophy,
   Users,
-  Volume2,
-  VolumeX,
   Wifi,
   WifiOff,
 } from 'lucide-react';
@@ -30,10 +28,8 @@ import {
 } from '@/components/play/MorningSequenceModal';
 import { isFirebaseConfigured } from '@/lib/firebase';
 import { playerGenderFromAvatarId } from '@/lib/game/avatars';
-import { playMorningEventSound, playPhaseBgm, stopAllAudio } from '@/lib/game/audio';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import { playerList, subscribeRoom } from '@/lib/game/room';
-import { playVictorySound } from '@/lib/utils/sound';
 import type {
   ActiveMorningEvent,
   GameRoom,
@@ -42,13 +38,17 @@ import type {
   PlayerGender,
 } from '@/types/game';
 
+function formatPin(pin: string) {
+  return pin.replace(/(\d{3})(\d{3})/, '$1 $2');
+}
+
 const STATE_LABELS: Record<GameState, string> = {
   WAITING: '입장 대기',
-  DAY_TALK: '낮 · 토론',
+  DAY_TALK: '낮',
   DAY_MATCH: '낮 · 1:1 매칭',
   DAY_MISSION: '낮 · 미션',
   DAY_VOTE: '낮 · 투표',
-  NIGHT: '밤 세션',
+  NIGHT: '밤',
   RESULT: '아침 결과',
   ENDED: '게임 종료',
 };
@@ -243,9 +243,9 @@ function PublicStage({ room, now }: { room: GameRoom; now: number }) {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       className="w-full max-w-5xl rounded-[2rem] border border-white/20 bg-slate-950/55 p-7 text-center shadow-2xl shadow-black/40 backdrop-blur-md sm:p-12"
     >
-      <div className="flex items-center justify-center gap-3 text-sm font-black uppercase tracking-[0.28em] text-white/55 sm:text-base">
+      <div className="flex items-center justify-center gap-3 text-sm font-black tracking-wide text-white/55 sm:text-base">
         {isNight ? <Moon className="h-5 w-5 text-indigo-200" /> : <Sun className="h-5 w-5 text-amber-200" />}
-        {room.gameState === 'WAITING' ? 'X-MAFIA LOBBY' : 'PUBLIC GAME DISPLAY'}
+        {room.gameState === 'WAITING' ? '입장 대기' : null}
       </div>
       <h1 className="mt-5 text-balance text-5xl font-black tracking-tight text-white drop-shadow-lg sm:text-8xl">
         {STATE_LABELS[room.gameState]}
@@ -513,10 +513,7 @@ export default function HostDisplayPage() {
   const [room, setRoom] = useState<GameRoom | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const [audioReady, setAudioReady] = useState(false);
   const [morningIndex, setMorningIndex] = useState(0);
-  const morningSoundRef = useRef<string | null>(null);
-  const victorySoundRef = useRef<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -551,8 +548,6 @@ export default function HostDisplayPage() {
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => () => stopAllAudio(), []);
-
   const morningEvents = useMemo(
     () => (room ? fallbackPublicMorningEvents(room) : []),
     [room],
@@ -572,55 +567,17 @@ export default function HostDisplayPage() {
 
   useEffect(() => {
     setMorningIndex(0);
-    morningSoundRef.current = null;
   }, [morningKey]);
 
   useEffect(() => {
     if (room?.gameState !== 'RESULT' || !currentMorningEvent) return;
-    const soundKey = `${morningKey}:${morningIndex}`;
-    if (morningSoundRef.current !== soundKey) {
-      morningSoundRef.current = soundKey;
-      if (audioReady) {
-        void playMorningEventSound(currentMorningEvent.event).catch(() => {
-          /* 오디오 차단 시 시각 연출은 계속한다 */
-        });
-      }
-    }
     const timer = window.setTimeout(() => {
       setMorningIndex((index) => (index + 1 < morningEvents.length ? index + 1 : morningEvents.length));
     }, 2600);
     return () => window.clearTimeout(timer);
-  }, [audioReady, currentMorningEvent, morningEvents.length, morningIndex, morningKey, room?.gameState]);
-
-  useEffect(() => {
-    if (!room || !audioReady) return;
-    void playPhaseBgm(room.gameState).catch(() => {
-      /* 오디오 정책에 막혀도 화면 동기화는 유지한다 */
-    });
-  }, [audioReady, room?.gameState]);
-
-  useEffect(() => {
-    const winner = room?.victoryTeam ?? room?.winnerSide;
-    if (!room || room.gameState !== 'ENDED' || !winner) return;
-    const key = `${room.roomId}:${room.currentRound}:${winner}`;
-    if (victorySoundRef.current === key || !audioReady) return;
-    victorySoundRef.current = key;
-    void playVictorySound(winner);
-  }, [audioReady, room]);
-
-  const enableAudio = async () => {
-    setAudioReady(true);
-    if (room) {
-      try {
-        await playPhaseBgm(room.gameState);
-      } catch {
-        /* 브라우저 정책에 따라 무음으로 계속 표시 */
-      }
-    }
-  };
+  }, [currentMorningEvent, morningEvents.length, morningIndex, morningKey, room?.gameState]);
 
   const phase = toBackgroundPhase(room?.gameState);
-  const connected = Boolean(room);
 
   return (
     <GameBackground theme="VILLAGE" gameState={phase} playerCount={room && phase === 'WAITING' ? playerList(room).length : 0} className="min-h-screen">
@@ -634,13 +591,13 @@ export default function HostDisplayPage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2 text-xs font-black sm:gap-3 sm:text-sm">
+            {room && (
+              <span className="rounded-full bg-amber-400/95 px-3 py-1.5 font-mono text-base tracking-wider text-stone-950 sm:px-4 sm:py-2 sm:text-xl">
+                PIN {formatPin(room.pin)}
+              </span>
+            )}
             {room && <span className="rounded-full bg-black/35 px-3 py-1.5 ring-1 ring-white/15">{STATE_LABELS[room.gameState]}</span>}
             {room && room.gameState !== 'WAITING' && <span className="rounded-full bg-amber-400/90 px-3 py-1.5 font-mono text-stone-900">ROUND {room.currentRound} / {room.maxRounds}</span>}
-            {audioReady ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/25 px-3 py-1.5 text-emerald-100 ring-1 ring-emerald-200/25"><Volume2 className="h-4 w-4" /> 소리 켜짐</span>
-            ) : (
-              <button type="button" onClick={() => void enableAudio()} className="inline-flex items-center gap-1.5 rounded-full bg-amber-400 px-3 py-1.5 text-stone-950 shadow-lg transition hover:bg-amber-300" title="서브 모니터에서 효과음을 재생하려면 한 번 눌러 주세요."><VolumeX className="h-4 w-4" /> 소리 켜기</button>
-            )}
           </div>
         </header>
 
@@ -672,7 +629,7 @@ export default function HostDisplayPage() {
         </main>
 
         <footer className="relative z-20 px-5 pb-4 text-center text-[10px] font-bold tracking-wide text-white/45 sm:text-xs">
-          교사 화면에서 게임을 진행하면 이 화면이 실시간으로 자동 전환됩니다.
+          소리(나레이션·배경음)는 교사 화면에서 켜고 끌 수 있습니다. 교사 화면에서 게임을 진행하면 이 화면이 실시간으로 자동 전환됩니다.
         </footer>
       </div>
     </GameBackground>

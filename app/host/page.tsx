@@ -15,6 +15,7 @@ import {
   Users,
   Vote,
   Volume2,
+  VolumeX,
   HeartHandshake,
   Monitor,
   Plus,
@@ -46,7 +47,14 @@ import { PlayerRoster } from '@/components/play/PlayerRoster';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { isFirebaseConfigured } from '@/lib/firebase';
 import { firstFreeAvatarId, playerGenderFromAvatarId } from '@/lib/game/avatars';
-import { playPhaseBgm, speak, speakPhase, stopAllAudio } from '@/lib/game/audio';
+import {
+  playPhaseBgm,
+  setBgmEnabled,
+  setNarrationEnabled,
+  speak,
+  speakPhase,
+  stopAllAudio,
+} from '@/lib/game/audio';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import {
   dismissMorningResult,
@@ -69,7 +77,7 @@ import {
   finalizeNightQuiz,
   generatePin,
   playerList,
-  resolveDayVote,
+  resolveDayVoteAndEnterNight,
   resolveMafiaMissionState,
   resolveNightQuizTimeout,
   restartGameRoom,
@@ -104,9 +112,19 @@ function speakAfterVoteResolve(prev: GameRoom, next: GameRoom) {
   const announcement = next.dayVoteResult?.announcement;
   if (announcement) {
     speak(announcement);
-    return;
+  } else if (next.gameState !== 'ENDED') {
+    speak('투표가 종료되었습니다. 탈락자는 없습니다.');
   }
-  speak('투표가 종료되었습니다. 탈락자는 없습니다.');
+  if (next.gameState === 'NIGHT') {
+    window.setTimeout(() => speak('밤이 되었습니다. 퀴즈를 풀어 주세요.'), 1200);
+  }
+  if (next.gameState === 'ENDED') {
+    speak(
+      next.winnerSide === 'CITIZEN'
+        ? '마피아를 모두 찾아냈습니다. 시민 팀의 승리입니다.'
+        : '마피아 팀의 최종 승리입니다.',
+    );
+  }
 }
 
 function toBackgroundPhase(state: GameState): BackgroundPhase {
@@ -134,11 +152,14 @@ function formatPin(pin: string) {
 export default function HostPage() {
   const theme: Theme = 'VILLAGE';
   const [room, setRoom] = useState<GameRoom | null>(null);
+  const roomStateRef = useRef<GameRoom | null>(null);
+  roomStateRef.current = room;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [joinUrl, setJoinUrl] = useState('');
-  const [audioReady, setAudioReady] = useState(false);
+  const [bgmOn, setBgmOn] = useState(false);
+  const [narrationOn, setNarrationOn] = useState(false);
   const [roleBoardOpen, setRoleBoardOpen] = useState(false);
   const [nightConfigOpen, setNightConfigOpen] = useState(false);
   const [mafiaMissionOpen, setMafiaMissionOpen] = useState(false);
@@ -235,12 +256,15 @@ export default function HostPage() {
     return () => unsub?.();
   }, [room?.roomId]);
 
-  // GameState 변경 → BGM + TTS
+  // GameState 변경 → BGM + TTS (각각 켜져 있을 때만)
   useEffect(() => {
-    if (!room || !audioReady) return;
+    if (!room) return;
     if (prevStateRef.current === room.gameState) return;
     prevStateRef.current = room.gameState;
-    void playPhaseBgm(room.gameState);
+    if (bgmOn) {
+      void playPhaseBgm(room.gameState);
+    }
+    if (!narrationOn) return;
     if (room.gameState === 'ENDED') {
       if (room.winnerSide === 'MAFIA') {
         speak('마피아 팀의 최종 승리입니다.');
@@ -252,7 +276,7 @@ export default function HostPage() {
     } else {
       speakPhase(room.gameState);
     }
-  }, [room?.gameState, room, audioReady]);
+  }, [room?.gameState, room, bgmOn, narrationOn]);
 
   useEffect(() => () => stopAllAudio(), []);
 
@@ -285,7 +309,7 @@ export default function HostPage() {
     if (voteAutoEndedRef.current === room.voteEndsAt) return;
     voteAutoEndedRef.current = room.voteEndsAt;
     void (async () => {
-      const next = resolveDayVote(room);
+      const next = resolveDayVoteAndEnterNight(room);
       await commitRoom(next);
       speakAfterVoteResolve(room, next);
     })();
@@ -299,20 +323,26 @@ export default function HostPage() {
     }
   }, [room?.gameState]);
 
-  const enableAudio = useCallback(async () => {
-    setAudioReady(true);
-    if (room) {
-      await playPhaseBgm(room.gameState);
-      speak('오디오가 활성화되었습니다.');
+  const toggleBgm = useCallback(async () => {
+    const next = !bgmOn;
+    setBgmOn(next);
+    await setBgmEnabled(next, next && room ? room.gameState : null);
+  }, [bgmOn, room]);
+
+  const toggleNarration = useCallback(async () => {
+    const next = !narrationOn;
+    setNarrationOn(next);
+    await setNarrationEnabled(next);
+    if (next) {
+      speak('나레이션이 켜졌습니다.');
     }
-  }, [room]);
+  }, [narrationOn]);
 
   const handleCreateRoom = async () => {
     if (!isFirebaseConfigured()) {
       setError(
         'Firebase가 설정되지 않았습니다. .env.local에 실제 Firebase 설정을 넣은 뒤 다시 시도하세요.',
       );
-      speak('파이어베이스 설정이 필요합니다.');
       return;
     }
     setBusy(true);
@@ -320,22 +350,27 @@ export default function HostPage() {
     const next = createEmptyRoom(theme, pin);
     await commitRoom(next);
     prevStateRef.current = null;
-    setAudioReady(true);
-    await playPhaseBgm('WAITING');
+    setBgmOn(true);
+    setNarrationOn(true);
+    await setBgmEnabled(true, 'WAITING');
+    await setNarrationEnabled(true);
     speakPhase('WAITING');
     setBusy(false);
   };
 
   const runAction = async (factory: (r: GameRoom) => GameRoom, minPlayers = 0) => {
-    if (!room) return;
-    if (playerCount < minPlayers) {
+    const current = roomStateRef.current;
+    if (!current) return;
+    if (playerList(current).length < minPlayers) {
       speak(`최소 ${minPlayers}명이 필요합니다.`);
       setError(`최소 ${minPlayers}명의 참가자가 필요합니다.`);
       return;
     }
     setBusy(true);
     setError(null);
-    await commitRoom(factory(room));
+    const next = factory(current);
+    roomStateRef.current = next;
+    await commitRoom(next);
     setBusy(false);
   };
 
@@ -551,16 +586,34 @@ export default function HostPage() {
                 {playerCount}명
               </span>
             )}
-            {!audioReady ? (
-              <button
-                type="button"
-                onClick={() => void enableAudio()}
-                className="inline-flex items-center gap-1.5 rounded-md bg-amber-500/90 px-3 py-1.5 font-semibold text-black transition hover:bg-amber-400"
-              >
-                <Volume2 className="h-4 w-4" />
-                소리 켜기
-              </button>
-            ) : null}
+            <button
+              type="button"
+              onClick={() => void toggleNarration()}
+              title="나레이션(TTS) 켜기/끄기"
+              aria-pressed={narrationOn}
+              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 font-semibold transition ${
+                narrationOn
+                  ? 'bg-emerald-500/85 text-white hover:bg-emerald-400'
+                  : 'bg-black/40 text-white/80 hover:bg-white/15'
+              }`}
+            >
+              {narrationOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+              나레이션
+            </button>
+            <button
+              type="button"
+              onClick={() => void toggleBgm()}
+              title="배경음·효과음 켜기/끄기"
+              aria-pressed={bgmOn}
+              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 font-semibold transition ${
+                bgmOn
+                  ? 'bg-amber-500/90 text-stone-900 hover:bg-amber-400'
+                  : 'bg-black/40 text-white/80 hover:bg-white/15'
+              }`}
+            >
+              {bgmOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+              배경음
+            </button>
           </div>
         </header>
 
@@ -673,12 +726,14 @@ export default function HostPage() {
                       void runAction((r) => assignRolesManual(r, assignments));
                       speak('수동 직업 배정을 저장했습니다.');
                     }}
-                    onStart={(rounds) => {
-                      void runAction(
-                        (r) => startAssignedGame(setMaxRounds(r, rounds)),
-                        4,
-                      );
-                      speak('게임을 시작합니다.');
+                    onStart={(rounds, assignments) => {
+                      void runAction((r) => {
+                        const withRoles = assignments
+                          ? assignRolesManual(r, assignments)
+                          : r;
+                        return startAssignedGame(setMaxRounds(withRoles, rounds));
+                      }, 4);
+                      speak('직업을 배정하고 게임을 시작합니다.');
                     }}
                     onMaxRoundsChange={(n) => {
                       void runAction((r) => setMaxRounds(r, n));
@@ -749,7 +804,7 @@ export default function HostPage() {
                     disabled={busy}
                     onClick={() => {
                       void runAction((r) => {
-                        const next = resolveDayVote(r);
+                        const next = resolveDayVoteAndEnterNight(r);
                         speakAfterVoteResolve(r, next);
                         return next;
                       });
@@ -763,6 +818,27 @@ export default function HostPage() {
               </StagePanel>
             ) : room.gameState === 'NIGHT' ? (
               <StagePanel key="night" title="밤 — 퀴즈 · 직업 활동">
+                {room.dayVoteResult && (
+                  <div className="mb-5 rounded-xl bg-red-950/50 px-4 py-3 text-left ring-1 ring-red-400/30">
+                    <p className="text-xs font-bold uppercase tracking-wider text-red-200/80">
+                      낮 투표 결과
+                    </p>
+                    <p className="mt-1 text-sm font-bold text-white">
+                      {room.dayVoteResult.announcement ??
+                        (room.dayVoteResult.eliminatedName
+                          ? `${room.dayVoteResult.eliminatedName} 님 탈락`
+                          : '탈락자 없음')}
+                    </p>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void runAction(dismissDayVoteResult)}
+                      className="mt-2 text-xs font-bold text-white/55 underline hover:text-white"
+                    >
+                      공지 닫기
+                    </button>
+                  </div>
+                )}
                 <div className="flex flex-wrap items-center justify-center gap-4">
                   <Moon className="h-10 w-10 text-red-300" />
                   <p className="text-lg text-white/85">
@@ -902,16 +978,32 @@ export default function HostPage() {
                     : ''}
               </p>
               <div className="flex items-center gap-2">
-                {!audioReady && (
-                  <button
-                    type="button"
-                    onClick={() => void enableAudio()}
-                    className="inline-flex items-center gap-1 rounded-xl bg-white/10 px-3 py-2 text-xs font-bold text-white hover:bg-white/16"
-                  >
-                    <Volume2 className="h-3.5 w-3.5" />
-                    소리
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => void toggleNarration()}
+                  aria-pressed={narrationOn}
+                  className={`inline-flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-bold transition ${
+                    narrationOn
+                      ? 'bg-emerald-500/80 text-white hover:bg-emerald-400'
+                      : 'bg-white/10 text-white/80 hover:bg-white/16'
+                  }`}
+                >
+                  {narrationOn ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
+                  나레이션
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void toggleBgm()}
+                  aria-pressed={bgmOn}
+                  className={`inline-flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-bold transition ${
+                    bgmOn
+                      ? 'bg-amber-500/90 text-stone-900 hover:bg-amber-400'
+                      : 'bg-white/10 text-white/80 hover:bg-white/16'
+                  }`}
+                >
+                  {bgmOn ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
+                  배경음
+                </button>
               </div>
             </div>
 
@@ -1018,7 +1110,7 @@ export default function HostPage() {
                     disabled={busy}
                     onClick={() => {
                       void runAction((r) => {
-                        const next = resolveDayVote(r);
+                        const next = resolveDayVoteAndEnterNight(r);
                         speakAfterVoteResolve(r, next);
                         return next;
                       });
@@ -1234,6 +1326,7 @@ function DayVoteResultBanner({
                 avatarId={eliminated.avatarId}
                 isAlive={false}
                 size={52}
+                previewOnHover
               />
               <span className="text-2xl font-black text-white">
                 {eliminated.name}
@@ -1356,6 +1449,7 @@ function MorningResultStage({
                         avatarId={p?.avatarId}
                         isAlive={false}
                         size={48}
+                        previewOnHover
                       />
                       <span className="text-2xl font-black text-white">
                         {p?.name ?? '???'}

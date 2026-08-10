@@ -23,6 +23,11 @@ import {
   isAnswerCorrect,
 } from '@/lib/game/missions';
 import {
+  generateQuizByMode,
+  type ElementaryGrade,
+  type QuizMode,
+} from '@/lib/game/quizGenerator';
+import {
   buildRoleDeck,
   buildRoleDeckFromCounts,
   ROLE_LABELS,
@@ -295,10 +300,11 @@ export function assignRolesManual(
 ): GameRoom {
   const nextPlayers: Record<string, Player> = {};
   Object.values(room.players ?? {}).forEach((p) => {
-    const role = assignments[p.id];
+    const hasAssignment = Object.prototype.hasOwnProperty.call(assignments, p.id);
+    const nextRole = hasAssignment ? assignments[p.id] : p.role;
     nextPlayers[p.id] = {
       ...p,
-      role: role === undefined ? p.role : role,
+      role: nextRole ?? null,
     };
   });
   return { ...room, players: nextPlayers };
@@ -871,6 +877,61 @@ export function resolveDayVote(room: GameRoom): GameRoom {
 
   // 투표로 마피아 전멸 → 시민 승 / 마지막 라운드 낮 종료 → 마피아 승
   return evaluateGameEnd(next, { checkMaxRounds: true });
+}
+
+/** 직전 밤 설정(있으면)을 이어받거나 기본 수학 퀴즈로 밤 미션을 만든다. */
+export function buildAutoNightQuizConfig(room: GameRoom): NightQuizConfig {
+  const prev = room.nightQuizState;
+  const rawMode = prev?.mode;
+  const mode: QuizMode =
+    rawMode === 'KOREAN' || rawMode === 'GENERAL' || rawMode === 'MATH'
+      ? rawMode
+      : 'MATH';
+  const grade = Math.min(
+    6,
+    Math.max(1, prev?.grade ?? 3),
+  ) as ElementaryGrade;
+  const generated = generateQuizByMode(mode, { grade });
+  return {
+    mode,
+    grade: mode === 'MATH' ? grade : null,
+    question: generated.question,
+    answer: generated.answer,
+    choices: [...generated.choices],
+    correctIndex: generated.correctIndex,
+    timeLimitSec: Math.max(5, prev?.timeLimitSec ?? 45),
+    successThresholdPercent: Math.min(
+      100,
+      Math.max(1, prev?.successThresholdPercent ?? 70),
+    ),
+    successHint:
+      prev?.successHint?.trim() ||
+      '마피아 중 한 명은 오늘 평소보다 말이 적을 수 있습니다.',
+  };
+}
+
+/**
+ * 낮 투표 종료 → (재투표/게임종료가 아니면) 곧바로 밤 시작.
+ * 탈락 공지(dayVoteResult)는 학생 팝업용으로 밤에도 잠시 유지한다.
+ */
+export function resolveDayVoteAndEnterNight(
+  room: GameRoom,
+  quizConfig?: NightQuizConfig,
+): GameRoom {
+  const afterVote = resolveDayVote(room);
+  if (afterVote.gameState === 'DAY_VOTE' || afterVote.gameState === 'ENDED') {
+    return afterVote;
+  }
+
+  const voteResult = afterVote.dayVoteResult;
+  const night = startNightPhase(
+    afterVote,
+    quizConfig ?? buildAutoNightQuizConfig(afterVote),
+  );
+  return {
+    ...night,
+    dayVoteResult: voteResult,
+  };
 }
 
 export function dismissDayVoteResult(room: GameRoom): GameRoom {

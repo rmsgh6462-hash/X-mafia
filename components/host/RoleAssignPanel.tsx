@@ -33,7 +33,11 @@ export function RoleAssignPanel({
     maxRounds: number,
   ) => void;
   onManualAssign: (assignments: Record<string, Role | null>) => void;
-  onStart: (maxRounds: number) => void;
+  /** 수동 배정 저장 + 게임 시작을 한 번에 (assignments 미전달 시 현재 room 직업 사용) */
+  onStart: (
+    maxRounds: number,
+    assignments?: Record<string, Role | null>,
+  ) => void;
   onMaxRoundsChange?: (maxRounds: number) => void;
 }) {
   const players = useMemo(() => playerList(room), [room]);
@@ -64,7 +68,10 @@ export function RoleAssignPanel({
     setManual((prev) => {
       const next: Record<string, Role | null> = {};
       players.forEach((p) => {
-        next[p.id] = prev[p.id] ?? p.role ?? null;
+        // null 은 유효한 '미배정' 선택이므로 ?? 로 덮어쓰지 않는다.
+        next[p.id] = Object.prototype.hasOwnProperty.call(prev, p.id)
+          ? prev[p.id] ?? null
+          : (p.role ?? null);
       });
       return next;
     });
@@ -75,6 +82,12 @@ export function RoleAssignPanel({
   const countsValid = special <= n && counts.MAFIA >= 1;
 
   const allAssigned = players.length > 0 && players.every((p) => p.role != null);
+  const manualAssignedCount = players.filter((p) => Boolean(manual[p.id])).length;
+  const manualMafiaCount = players.filter((p) => manual[p.id] === 'MAFIA').length;
+  const manualReady =
+    players.length >= 4 &&
+    players.every((p) => Boolean(manual[p.id])) &&
+    manualMafiaCount >= 1;
 
   const bump = (key: keyof RoleCountConfig, delta: number) => {
     setCounts((c) => ({
@@ -251,7 +264,7 @@ export function RoleAssignPanel({
                 key={p.id}
                 className="flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2"
               >
-                <CharacterAvatar avatarId={p.avatarId} size={40} isAlive />
+                <CharacterAvatar avatarId={p.avatarId} size={40} isAlive previewOnHover />
                 <span className="min-w-0 flex-1 truncate text-sm font-bold">
                   {p.name}
                 </span>
@@ -286,22 +299,33 @@ export function RoleAssignPanel({
             </button>
             <button
               type="button"
-              disabled={busy || n < 4}
-              onClick={() => onStart(maxRounds)}
+              disabled={busy || !manualReady}
+              onClick={() => onStart(maxRounds, manual)}
               className="rounded-xl bg-amber-400 px-4 py-2.5 text-sm font-black text-stone-900 hover:bg-amber-300 disabled:opacity-40"
             >
-              게임 시작
+              배정 저장 후 게임 시작
             </button>
           </div>
+          {n >= 4 && !manualReady && (
+            <p className="text-sm text-amber-200/90">
+              {manualAssignedCount < n
+                ? `전원 직업을 선택하세요. (${manualAssignedCount}/${n})`
+                : '마피아를 최소 1명 배정해야 시작할 수 있습니다.'}
+            </p>
+          )}
+          {n < 4 && (
+            <p className="text-sm text-white/50">게임 시작에는 최소 4명이 필요합니다.</p>
+          )}
         </div>
       )}
 
-      {allAssigned && (
+      {(allAssigned || manualReady) && (
         <p className="mt-4 text-xs text-emerald-300/90">
           전원 직업 배정 완료 — 게임 시작 가능
           {players.map((p) => (
             <span key={p.id} className="ml-2 text-white/50">
-              {p.name}:{p.role ? ROLE_LABELS[p.role] : '?'}
+              {p.name}:
+              {ROLE_LABELS[(manual[p.id] ?? p.role) as Role] ?? '?'}
             </span>
           ))}
         </p>
