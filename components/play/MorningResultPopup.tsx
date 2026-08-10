@@ -9,7 +9,10 @@ import {
   Sunrise,
 } from 'lucide-react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
+import { EventIllustration } from '@/components/play/EventIllustration';
 import { NewspaperArticleModal } from '@/components/play/NewspaperArticleModal';
+import { ScreenFlashOverlay } from '@/components/play/ScreenFlashOverlay';
+import { useMafiaKillReveal } from '@/hooks/useMafiaKillReveal';
 import { playerGenderFromAvatarId } from '@/lib/game/avatars';
 import { playMorningEventSound } from '@/lib/game/audio';
 import { getCharacterStateForRole } from '@/lib/characterUtils';
@@ -32,6 +35,7 @@ const EVENT_ORDER: MorningEvent[] = [
 
 type IdentityRevealStep =
   | 'NONE'
+  | 'TEASE'
   | 'REVEAL_MAFIA_CHECK'
   | 'REVEAL_FULL_ROLE';
 
@@ -137,6 +141,8 @@ export function MorningSequenceModal({
   revealRoles,
   /** 교사 화면의 morningRevealIndex — 있으면 자동 넘김 없이 동기화 */
   controlledIndex,
+  /** 교사 화면의 morningIdentityStep */
+  controlledIdentityStep,
   onClose,
 }: {
   open: boolean;
@@ -148,10 +154,11 @@ export function MorningSequenceModal({
   players: Record<string, Player>;
   revealRoles: boolean;
   controlledIndex?: number;
+  controlledIdentityStep?: IdentityRevealStep;
   onClose: () => void;
 }) {
   const [localIndex, setLocalIndex] = useState(0);
-  const [identityStep, setIdentityStep] =
+  const [localIdentityStep, setLocalIdentityStep] =
     useState<IdentityRevealStep>('NONE');
   const onCloseRef = useRef(onClose);
   const teacherControlled = controlledIndex != null;
@@ -196,6 +203,10 @@ export function MorningSequenceModal({
       )
     : localIndex;
 
+  const identityStep: IdentityRevealStep = teacherControlled
+    ? controlledIdentityStep ?? 'NONE'
+    : localIdentityStep;
+
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
@@ -203,11 +214,13 @@ export function MorningSequenceModal({
   useEffect(() => {
     if (!open) {
       setLocalIndex(0);
-      setIdentityStep('NONE');
+      setLocalIdentityStep('NONE');
       return;
     }
-    setIdentityStep('NONE');
-  }, [open, eventIndex]);
+    if (!teacherControlled) {
+      setLocalIdentityStep('NONE');
+    }
+  }, [open, eventIndex, teacherControlled]);
 
   const currentEvent = sequence[eventIndex] ?? null;
   const currentType = currentEvent?.event ?? null;
@@ -229,8 +242,11 @@ export function MorningSequenceModal({
 
   useEffect(() => {
     if (!open || !currentType) return;
-    // 특보 단계의 셔터·타자기 효과음은 신문 컴포넌트가 등장할 때 재생한다.
-    if (identityStep === 'NONE' && currentType !== 'REPORTER_NEWS') {
+    if (
+      (identityStep === 'NONE' || identityStep === 'TEASE') &&
+      currentType !== 'REPORTER_NEWS' &&
+      currentType !== 'MAFIA_KILL'
+    ) {
       void playMorningEventSound(currentType, {
         success: currentSuccess,
       }).catch(() => {
@@ -238,27 +254,34 @@ export function MorningSequenceModal({
       });
     }
 
+    if (teacherControlled) return;
+
     if (canRevealIdentity && identityStep === 'NONE') {
       const timer = window.setTimeout(
-        () => setIdentityStep('REVEAL_MAFIA_CHECK'),
+        () => setLocalIdentityStep('TEASE'),
         2400,
+      );
+      return () => window.clearTimeout(timer);
+    }
+
+    if (canRevealIdentity && identityStep === 'TEASE') {
+      const timer = window.setTimeout(
+        () => setLocalIdentityStep('REVEAL_MAFIA_CHECK'),
+        1900,
       );
       return () => window.clearTimeout(timer);
     }
 
     if (canRevealIdentity && identityStep === 'REVEAL_MAFIA_CHECK') {
       const timer = window.setTimeout(
-        () => setIdentityStep('REVEAL_FULL_ROLE'),
+        () => setLocalIdentityStep('REVEAL_FULL_ROLE'),
         1900,
       );
       return () => window.clearTimeout(timer);
     }
 
-    // 교사 수동 진행: 직업 공개 연출까지만 자동, 다음 이벤트는 교사가 넘긴다.
-    if (teacherControlled) return;
-
     const timer = window.setTimeout(() => {
-      setIdentityStep('NONE');
+      setLocalIdentityStep('NONE');
       if (eventIndex >= sequence.length - 1) {
         setLocalIndex(0);
         onCloseRef.current();
@@ -284,7 +307,7 @@ export function MorningSequenceModal({
   const lastEvent = eventIndex >= sequence.length - 1;
   const closePopup = () => {
     setLocalIndex(0);
-    setIdentityStep('NONE');
+    setLocalIdentityStep('NONE');
     onClose();
   };
   const nextOrClose = () => {
@@ -292,7 +315,7 @@ export function MorningSequenceModal({
       closePopup();
       return;
     }
-    setIdentityStep('NONE');
+    setLocalIdentityStep('NONE');
     if (lastEvent) {
       closePopup();
     } else {
@@ -314,7 +337,7 @@ export function MorningSequenceModal({
           {isMafiaKill && (
             <div
               aria-hidden="true"
-              className="morning-red-flash pointer-events-none fixed inset-0 z-[80] bg-red-600"
+              className="morning-red-flash pointer-events-none fixed inset-0 z-[80] bg-red-600 opacity-0"
             />
           )}
           <motion.div
@@ -353,16 +376,6 @@ export function MorningSequenceModal({
                       ? players[result.reporterTargetId]?.avatarId
                       : null
                 }
-                reporterName={
-                  currentEvent.actorId
-                    ? players[currentEvent.actorId]?.name
-                    : null
-                }
-                reporterAvatarId={
-                  currentEvent.actorId
-                    ? players[currentEvent.actorId]?.avatarId
-                    : null
-                }
                 onClose={closePopup}
                 onNext={nextOrClose}
                 hasNext={!lastEvent}
@@ -384,8 +397,6 @@ export function MorningSequenceModal({
             )}
             {(currentType === 'DOCTOR_IDLE' || currentType === 'REPORTER_IDLE') && (
               <RoleIdlePanel
-                event={currentEvent}
-                players={players}
                 role={currentType === 'DOCTOR_IDLE' ? 'DOCTOR' : 'REPORTER'}
                 onClose={closePopup}
                 onNext={nextOrClose}
@@ -405,8 +416,6 @@ export function MorningSequenceModal({
                 />
               ) : (
                 <DoctorFailPanel
-                  event={currentEvent}
-                  players={players}
                   onClose={closePopup}
                   onNext={nextOrClose}
                   hasNext={!lastEvent}
@@ -472,29 +481,25 @@ function PopupActions({
 }
 
 function RoleIdlePanel({
-  event,
-  players,
   role,
   onClose,
   onNext,
   hasNext,
   hideActions,
 }: {
-  event: ActiveMorningEvent;
-  players: Record<string, Player>;
   role: 'DOCTOR' | 'REPORTER';
   onClose: () => void;
   onNext: () => void;
   hasNext: boolean;
   hideActions?: boolean;
 }) {
-  const actor = event.actorId ? players[event.actorId] : null;
   const isDoctor = role === 'DOCTOR';
-  const state = isDoctor ? 'doctor_idle' : 'reporter_idle';
-  const title = isDoctor ? '의사가 밤새 조용히 밤을 보냈습니다.' : '기자가 밤새 조용히 밤을 보냈습니다.';
+  const title = isDoctor
+    ? '밤사이 의사는 아무도 지목하지 않고 조용히 넘겼습니다.'
+    : '밤사이 기자는 아무도 지목하지 않고 조용히 넘겼습니다.';
   const message = isDoctor
-    ? '치료 대상을 정하지 못해 오늘 밤은 아무도 치료하지 않았습니다.'
-    : '취재 대상을 정하지 못해 오늘 밤은 특종을 찾지 못했습니다.';
+    ? '이번 밤에는 의사 활동이 없었습니다.'
+    : '이번 밤에는 기자 활동이 없었습니다.';
 
   return (
     <motion.section
@@ -516,13 +521,11 @@ function RoleIdlePanel({
       />
       <div className="relative flex flex-col items-center px-5 pb-6 pt-7 text-center">
         <p className={`text-xs font-black uppercase tracking-[0.24em] ${isDoctor ? 'text-emerald-200' : 'text-amber-200'}`}>
-          {isDoctor ? 'Doctor Night Log' : 'Reporter Night Log'}
+          {isDoctor ? '의사 밤 기록' : '기자 밤 기록'}
         </p>
         <div className={`mt-5 rounded-[2rem] p-3 ring-4 ${isDoctor ? 'bg-emerald-950/60 ring-emerald-200/25' : 'bg-amber-950/55 ring-amber-200/25'}`}>
-          <CharacterAvatar
-            avatarId={actor?.avatarId ?? 'M0'}
-            isAlive={actor?.isAlive ?? true}
-            state={state}
+          <EventIllustration
+            kind={isDoctor ? 'doctor_idle' : 'reporter_idle'}
             size={150}
             className="relative z-10"
           />
@@ -574,14 +577,21 @@ function MafiaKillPanel({
     ? result.deadRoles?.[targetId] ?? (revealRoles && wasKilled ? target?.role : null)
     : null;
   const isFullRole = identityStep === 'REVEAL_FULL_ROLE';
+  const isTease = identityStep === 'TEASE';
   const isIdentityReveal =
     wasKilled && revealRoles && deadRole && identityStep !== 'NONE';
   const displayAvatarId = target?.avatarId ?? dead?.avatarId;
+  const { impactReady, showWhiteFlash } = useMafiaKillReveal(
+    wasKilled,
+    targetId ?? deadName,
+  );
+  const showDeadVisual = wasKilled && impactReady;
 
   return (
     <motion.section
-      className="morning-panel-shake relative overflow-hidden rounded-2xl border border-red-300/25 bg-[#0b0a19] text-white shadow-2xl shadow-red-950/60"
+      className={`morning-panel-shake relative overflow-hidden rounded-2xl border border-red-300/25 bg-[#0b0a19] text-white shadow-2xl shadow-red-950/60 ${showDeadVisual ? 'morning-dead-reveal' : ''}`}
     >
+      <ScreenFlashOverlay active={showWhiteFlash} variant="white" />
       <div className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-red-600 via-violet-400 to-red-600 opacity-80" />
       <div className="relative overflow-hidden px-5 pb-6 pt-7">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(127,29,29,0.45),transparent_60%)]" />
@@ -594,40 +604,42 @@ function MafiaKillPanel({
         />
         <div className="relative flex items-center justify-center gap-2 text-xs font-black uppercase tracking-[0.2em] text-red-200">
           <Radio className="h-4 w-4 animate-pulse" />
-          Night Alert · Mafia Attack
+          밤 경보 · 마피아 공격
           <Radio className="h-4 w-4 animate-pulse" />
         </div>
         <div className="relative mx-auto mt-4 w-full max-w-[360px] overflow-hidden rounded-2xl border border-red-300/30 bg-red-950/60 shadow-[0_0_36px_rgba(220,38,38,0.28)]">
           <div className="relative flex h-44 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_50%_45%,rgba(127,29,29,0.85),rgba(11,10,25,0.92)_70%)]">
             <CharacterAvatar
               avatarId={displayAvatarId}
-              isAlive={isFullRole ? true : !wasKilled}
+              isAlive={isFullRole ? true : !showDeadVisual}
               role={deadRole ?? target?.role}
               revealRole={isFullRole}
               state={
                 isFullRole && deadRole
                   ? getCharacterStateForRole(deadRole)
-                  : wasKilled
+                  : showDeadVisual
                     ? 'dead'
                     : null
               }
               size={108}
               className="relative z-10"
             />
-            <div className="morning-crosshair-lock pointer-events-none absolute left-1/2 top-1/2 z-20 h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-red-200/90 shadow-[0_0_18px_rgba(248,113,113,0.7)]">
+            <div
+              className={`morning-crosshair-lock pointer-events-none absolute left-1/2 top-1/2 z-20 h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-red-200/90 shadow-[0_0_18px_rgba(248,113,113,0.7)] ${showDeadVisual ? 'opacity-0' : 'opacity-100'}`}
+            >
               <span className="absolute left-1/2 top-0 h-5 w-px -translate-x-1/2 bg-red-100" />
               <span className="absolute bottom-0 left-1/2 h-5 w-px -translate-x-1/2 bg-red-100" />
               <span className="absolute left-0 top-1/2 h-px w-5 -translate-y-1/2 bg-red-100" />
               <span className="absolute right-0 top-1/2 h-px w-5 -translate-y-1/2 bg-red-100" />
               <Crosshair className="absolute left-1/2 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 text-red-100" />
             </div>
-            {wasKilled && (
+            {showDeadVisual && (
               <span className="morning-bullet-impact pointer-events-none absolute left-1/2 top-1/2 z-30 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#030308] ring-2 ring-red-200/90 shadow-[0_0_15px_5px_rgba(248,113,113,0.65)]" />
             )}
           </div>
           <div className="border-t border-red-300/20 bg-black/35 px-3 py-2 text-center">
             <p className="text-[10px] font-black uppercase tracking-[0.18em] text-red-200/65">
-              {wasKilled ? '피해 학생' : '공격 대상'}
+              {showDeadVisual ? '피해 학생' : wasKilled ? '공격 대상' : '공격 대상'}
             </p>
             <p className="mt-0.5 text-lg font-black text-white">{deadName}</p>
           </div>
@@ -636,11 +648,17 @@ function MafiaKillPanel({
           id="morning-result-title"
           className="relative mt-5 text-center text-2xl font-black leading-tight text-red-50"
         >
-          {wasKilled ? (
+          {showDeadVisual ? (
             <>
               지난밤 {deadName} 님이
               <br />
               마피아의 습격을 받고 탈락했습니다...
+            </>
+          ) : wasKilled ? (
+            <>
+              마피아의 공격이 감지되었습니다…
+              <br />
+              {deadName} 님에게 무언가 일어나고 있습니다.
             </>
           ) : (
             <>
@@ -665,9 +683,11 @@ function MafiaKillPanel({
             <p className="text-base font-black">
               {isFullRole
                 ? `${deadName} 님의 정체는 ${ROLE_LABELS[deadRole]}였습니다.`
-                : `${deadName} 님은... 마피아가... ${
-                    deadRole === 'MAFIA' ? '맞습니다!' : '아닙니다!'
-                  }`}
+                : isTease
+                  ? `${deadName} 님은... 마피아가`
+                  : `${deadName} 님은... 마피아가 ${
+                      deadRole === 'MAFIA' ? '맞습니다!' : '아닙니다!'
+                    }`}
             </p>
             {isFullRole && (
               <p className="mt-1 text-xs font-bold text-white/65">
@@ -755,7 +775,7 @@ function DoctorDefendPanel({
         </p>
         <div className="mt-3 flex items-center justify-center gap-1 text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-300/70">
           <HeartPulse className="h-3 w-3" />
-          Medical Rescue Complete
+          구조 완료
           <HeartPulse className="h-3 w-3" />
         </div>
       </div>
@@ -771,26 +791,16 @@ function DoctorDefendPanel({
 }
 
 function DoctorFailPanel({
-  event,
-  players,
   onClose,
   onNext,
   hasNext,
   hideActions,
 }: {
-  event: ActiveMorningEvent;
-  players: Record<string, Player>;
   onClose: () => void;
   onNext: () => void;
   hasNext: boolean;
   hideActions?: boolean;
 }) {
-  const targetPlayer = event.targetId ? players[event.targetId] : null;
-  const doctorPlayer = event.actorId ? players[event.actorId] : null;
-  const displayPlayer = doctorPlayer ?? targetPlayer;
-  const targetName = event.targetName ?? targetPlayer?.name ?? '학생';
-  const doctorName = doctorPlayer?.name ?? '의사';
-
   return (
     <motion.section
       className="overflow-hidden rounded-2xl border border-amber-200/30 bg-slate-950/95 text-white shadow-2xl shadow-violet-950/70"
@@ -801,29 +811,27 @@ function DoctorFailPanel({
         <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(115deg,transparent_20%,rgba(251,191,36,0.12)_48%,transparent_72%)]" />
         <div className="absolute inset-x-3 top-4 flex items-center justify-center gap-2 text-xs font-black uppercase tracking-[0.25em] text-amber-200 sm:text-sm">
           <HeartPulse className="h-4 w-4" />
-          Doctor Mission Failed
+          의사 미션 실패
           <HeartPulse className="h-4 w-4" />
         </div>
-        <CharacterAvatar
-          avatarId={displayPlayer?.avatarId}
-          isAlive
-          state="doctor_fail"
+        <EventIllustration
+          kind="doctor_fail"
           size={126}
           className="relative z-10 mt-6 ring-4 ring-amber-200/40 shadow-[0_0_28px_rgba(251,191,36,0.35)]"
         />
         <div className="relative z-10 mt-3 rounded-full border border-amber-100/45 bg-slate-950/70 px-4 py-1.5 text-sm font-black text-amber-100">
-          {doctorName}의 치료 작전
+          익명 치료 기록
         </div>
       </div>
       <div className="px-5 py-5 text-center">
         <h2 id="morning-result-title" className="text-2xl font-black text-amber-100">
-          의사의 허탕!
+          의사의 구조 실패!
         </h2>
         <p className="mt-3 text-sm font-bold leading-relaxed text-violet-100/85">
-          의사가 밤새 분주히 움직였지만, 아무도 구하지 못했습니다...
+          밤사이 의사가 분주히 움직였으나, 아무도 구하지 못했습니다...
         </p>
         <p className="mt-3 rounded-xl bg-white/5 px-4 py-3 text-xs font-black text-amber-100/80 ring-1 ring-amber-200/15">
-          치료 대상: {targetName}
+          특정 학생과 연결되지 않은 익명 연출입니다.
         </p>
       </div>
       <PopupActions

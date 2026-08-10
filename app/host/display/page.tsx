@@ -20,7 +20,10 @@ import {
   WifiOff,
 } from 'lucide-react';
 import GameBackground, { type BackgroundPhase } from '@/components/GameBackground';
+import { HeaderPinQrPanel } from '@/components/common/HeaderPinQrPanel';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
+import { EventIllustration } from '@/components/play/EventIllustration';
+import { JailCaptureScene } from '@/components/play/JailCaptureScene';
 import { NewspaperArticleModal } from '@/components/play/NewspaperArticleModal';
 import {
   getDoctorRescueImage,
@@ -30,7 +33,8 @@ import {
 import { isFirebaseConfigured } from '@/lib/firebase';
 import { playerGenderFromAvatarId } from '@/lib/game/avatars';
 import { getCharacterStateForRole } from '@/lib/characterUtils';
-import { playMorningEventSound } from '@/lib/game/audio';
+import { PublicMafiaKillScene } from '@/components/play/PublicMafiaKillScene';
+import { playMorningEventSound, playReporterNewsSound } from '@/lib/game/audio';
 import { ROLE_ACCENTS, ROLE_LABELS } from '@/lib/game/roles';
 import {
   VOTE_RESULT_DURATION_MS,
@@ -48,8 +52,10 @@ import type {
 
 type IdentityRevealStep =
   | 'NONE'
+  | 'TEASE'
   | 'REVEAL_MAFIA_CHECK'
-  | 'REVEAL_FULL_ROLE';
+  | 'REVEAL_FULL_ROLE'
+  | 'JAIL_CAPTURE';
 
 function formatPin(pin: string) {
   return pin.replace(/(\d{3})(\d{3})/, '$1 $2');
@@ -102,18 +108,19 @@ function toPublicRoom(source: GameRoom): GameRoom {
   const publicNightResults = source.nightResults
     ? {
         ...source.nightResults,
-        activeEvents: source.nightResults.activeEvents?.map((event) => ({
-          event: event.event,
-          // 미행동 연출은 해당 캐릭터를 보여줘야 하므로 actorId만 공개한다.
-          actorId:
-            event.event === 'DOCTOR_IDLE' || event.event === 'REPORTER_IDLE'
-              ? event.actorId
-              : null,
-          targetId: event.targetId,
-          targetName: event.targetName ?? null,
-          targetGender: event.targetGender ?? null,
-          success: event.success,
-        })),
+        activeEvents: source.nightResults.activeEvents?.map((event) => {
+          const doctorFailed =
+            event.event === 'DOCTOR_DEFEND' && event.success !== true;
+          return {
+            event: event.event,
+            // 공유 화면에서는 행동자와 허탕 대상 학생의 연결 정보를 제거한다.
+            actorId: null,
+            targetId: doctorFailed ? null : event.targetId,
+            targetName: doctorFailed ? null : event.targetName ?? null,
+            targetGender: doctorFailed ? null : event.targetGender ?? null,
+            success: event.success,
+          };
+        }),
         deadRoles:
           source.revealDeathRoles !== false
             ? source.nightResults.deadRoles ?? {}
@@ -399,60 +406,13 @@ function PublicMorningEvent({
 
   if (event.event === 'MAFIA_KILL') {
     return (
-      <motion.section
-        key="public-mafia-kill"
-        initial={{ opacity: 0, scale: 0.9, x: 24 }}
-        animate={{ opacity: 1, scale: 1, x: 0 }}
-        className={`morning-panel-shake relative w-full max-w-6xl overflow-hidden rounded-[2rem] border border-red-300/35 bg-[#0a0816]/85 text-white shadow-2xl shadow-red-950/60 ${wasKilled ? 'morning-dead-reveal' : ''}`}
-      >
-        <div className="absolute inset-x-0 top-0 h-2 bg-gradient-to-r from-red-700 via-rose-300 to-red-700" />
-        <div className="pointer-events-none absolute left-[12%] top-[12%] h-24 w-24 rounded-full bg-slate-100/15 blur-[1px] sm:h-36 sm:w-36" />
-        <motion.div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-[-12%] bottom-0 h-1/2 bg-gradient-to-t from-slate-100/10 via-slate-300/5 to-transparent blur-2xl"
-          animate={{ x: ['-4%', '4%', '-4%'], opacity: [0.35, 0.7, 0.35] }}
-          transition={{ duration: 5.5, repeat: Infinity, ease: 'easeInOut' }}
-        />
-        <div className="relative z-10 grid items-center gap-8 p-6 sm:p-10 lg:grid-cols-[1.25fr_1fr] lg:p-14">
-          <div className="relative flex h-64 items-center justify-center overflow-hidden rounded-3xl border border-red-200/25 bg-[radial-gradient(circle_at_50%_45%,rgba(127,29,29,0.85),rgba(11,10,25,0.92)_70%)] shadow-2xl shadow-red-950/50 sm:h-[25rem]">
-            <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_top,rgba(2,6,23,.88),transparent_62%),radial-gradient(circle_at_50%_22%,rgba(148,163,184,.16),transparent_32%)]" />
-            <motion.div
-              aria-hidden="true"
-              className="pointer-events-none absolute -inset-x-12 bottom-0 h-1/3 bg-slate-300/10 blur-xl"
-              animate={{ x: ['-8%', '8%', '-8%'], opacity: [0.2, 0.55, 0.2] }}
-              transition={{ duration: 4.2, repeat: Infinity, ease: 'easeInOut' }}
-            />
-            <CharacterAvatar
-              avatarId={target?.avatarId}
-              isAlive={!wasKilled}
-              state={wasKilled ? 'dead' : null}
-              size={avatarSize}
-              className="relative z-10"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-red-950/20" />
-            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-red-100 drop-shadow-[0_0_18px_rgba(248,113,113,.9)]">
-              <Crosshair className="h-24 w-24 sm:h-36 sm:w-36" strokeWidth={1.2} />
-            </div>
-            <div className="absolute bottom-4 left-4 rounded-full bg-black/65 px-4 py-2 text-sm font-black text-red-100 ring-1 ring-red-200/25 sm:text-lg">
-              {targetName}
-            </div>
-          </div>
-          <div className="text-center lg:text-left">
-            <div className="flex items-center justify-center gap-3 text-sm font-black uppercase tracking-[0.3em] text-red-200 lg:justify-start sm:text-lg">
-              <Swords className="h-6 w-6 animate-pulse" />
-              Mafia Attack Alert
-            </div>
-            <h1 className="mt-6 text-balance text-4xl font-black leading-tight text-red-50 sm:text-6xl">
-              {wasKilled ? `${targetName} 님이 탈락했습니다` : '마피아의 공격이 감지되었습니다'}
-            </h1>
-            <p className="mt-5 text-lg font-bold leading-relaxed text-red-100/75 sm:text-2xl">
-              {wasKilled
-                ? '지난밤 마을에서 공격을 받아 더 이상 게임에 참여할 수 없습니다.'
-                : `${targetName} 님이 공격 대상이었지만 아직 생존해 있습니다.`}
-            </p>
-          </div>
-        </div>
-      </motion.section>
+      <PublicMafiaKillScene
+        targetName={targetName}
+        avatarId={target?.avatarId}
+        avatarSize={avatarSize}
+        wasKilled={wasKilled}
+        targetKey={event.targetId ?? targetName}
+      />
     );
   }
 
@@ -460,7 +420,6 @@ function PublicMorningEvent({
     return (
       <PublicRoleIdle
         event={event}
-        room={room}
         avatarSize={avatarSize}
         role={event.event === 'DOCTOR_IDLE' ? 'DOCTOR' : 'REPORTER'}
       />
@@ -468,8 +427,6 @@ function PublicMorningEvent({
   }
 
   if (event.event === 'DOCTOR_DEFEND' && event.success !== true) {
-    const failurePlayer = event.actorId ? room.players[event.actorId] : target;
-
     return (
       <motion.section
         key="public-doctor-fail"
@@ -488,10 +445,8 @@ function PublicMorningEvent({
             />
             <Sparkles className="absolute left-[18%] top-[18%] h-12 w-12 text-amber-200/70 animate-pulse" />
             <Sparkles className="absolute bottom-[20%] right-[18%] h-9 w-9 text-violet-200/65 animate-pulse" />
-            <CharacterAvatar
-              avatarId={failurePlayer?.avatarId}
-              isAlive
-              state="doctor_fail"
+            <EventIllustration
+              kind="doctor_fail"
               size={avatarSize}
               className="relative z-10 ring-8 ring-amber-200/30 shadow-[0_0_42px_rgba(251,191,36,0.3)]"
             />
@@ -499,17 +454,17 @@ function PublicMorningEvent({
           <div className="text-center lg:text-left">
             <div className="flex items-center justify-center gap-3 text-sm font-black uppercase tracking-[0.3em] text-amber-200 lg:justify-start sm:text-lg">
               <HeartPulse className="h-7 w-7 animate-pulse" />
-              Doctor Mission Failed
+              의사 미션 실패
             </div>
             <h1 className="mt-6 text-balance text-4xl font-black leading-tight text-amber-50 sm:text-6xl">
-              의사의 허탕!
+              의사의 구조 실패!
             </h1>
             <p className="mt-5 text-lg font-bold leading-relaxed text-violet-100/85 sm:text-2xl">
-              의사가 밤새 분주히 움직였지만, 아무도 구하지 못했습니다...
+              밤사이 의사가 분주히 움직였으나, 아무도 구하지 못했습니다...
             </p>
             <p className="mt-5 inline-flex items-center gap-2 rounded-full bg-black/30 px-5 py-3 text-base font-black text-amber-100 ring-1 ring-amber-200/25 sm:text-xl">
               <HeartPulse className="h-5 w-5" />
-              치료 대상: {targetName}
+              익명 구조 실패 기록
             </p>
           </div>
         </div>
@@ -557,7 +512,7 @@ function PublicMorningEvent({
           <div className="text-center lg:text-left">
             <div className="flex items-center justify-center gap-3 text-sm font-black uppercase tracking-[0.3em] text-emerald-100 lg:justify-start sm:text-lg">
               <ShieldCheck className="h-7 w-7 animate-pulse" />
-              Doctor Rescue
+              의사 구조 성공
             </div>
             <h1 className="mt-6 text-balance text-4xl font-black leading-tight text-emerald-50 sm:text-6xl">
               {event.success ? '의사가 시민을 무사히 살려냈습니다!' : '의사가 보호막을 펼쳤습니다!'}
@@ -590,23 +545,20 @@ function PublicMorningEvent({
 
 function PublicRoleIdle({
   event,
-  room,
   avatarSize,
   role,
 }: {
   event: ActiveMorningEvent;
-  room: GameRoom;
   avatarSize: number;
   role: 'DOCTOR' | 'REPORTER';
 }) {
-  const actor = event.actorId ? room.players[event.actorId] : null;
   const isDoctor = role === 'DOCTOR';
   const title = isDoctor
-    ? '의사가 밤새 조용히 밤을 보냈습니다.'
-    : '기자가 밤새 조용히 밤을 보냈습니다.';
+    ? '밤사이 의사는 아무도 지목하지 않고 조용히 넘겼습니다.'
+    : '밤사이 기자는 아무도 지목하지 않고 조용히 넘겼습니다.';
   const message = isDoctor
-    ? '치료 대상을 정하지 못해 오늘 밤은 아무도 치료하지 않았습니다.'
-    : '취재 대상을 정하지 못해 오늘 밤은 특종을 찾지 못했습니다.';
+    ? '이번 밤에는 의사 활동이 없었습니다.'
+    : '이번 밤에는 기자 활동이 없었습니다.';
 
   return (
     <motion.section
@@ -636,10 +588,8 @@ function PublicRoleIdle({
             animate={{ x: ['-6%', '6%', '-6%'], opacity: [0.35, 0.7, 0.35] }}
             transition={{ duration: 4.5, repeat: Infinity, ease: 'easeInOut' }}
           />
-          <CharacterAvatar
-            avatarId={actor?.avatarId ?? 'M0'}
-            isAlive={actor?.isAlive ?? true}
-            state={isDoctor ? 'doctor_idle' : 'reporter_idle'}
+          <EventIllustration
+            kind={isDoctor ? 'doctor_idle' : 'reporter_idle'}
             size={Math.max(240, Math.round(avatarSize * 0.72))}
             className="relative z-10"
           />
@@ -647,7 +597,7 @@ function PublicRoleIdle({
         <div className="relative text-center lg:text-left">
           <div className={`flex items-center justify-center gap-3 text-sm font-black uppercase tracking-[0.3em] lg:justify-start sm:text-lg ${isDoctor ? 'text-emerald-200' : 'text-amber-200'}`}>
             {isDoctor ? <HeartPulse className="h-7 w-7" /> : <Radio className="h-7 w-7" />}
-            {isDoctor ? 'Doctor Night Log' : 'Reporter Night Log'}
+            {isDoctor ? '의사 밤 기록' : '기자 밤 기록'}
           </div>
           <h1 className="mt-6 text-balance text-4xl font-black leading-tight sm:text-6xl">
             {title}
@@ -679,6 +629,7 @@ function PublicIdentityReveal({
 }) {
   const isMafia = role === 'MAFIA';
   const isFullRole = step === 'REVEAL_FULL_ROLE';
+  const isTease = step === 'TEASE';
   const accent = ROLE_ACCENTS[role];
 
   return (
@@ -687,9 +638,11 @@ function PublicIdentityReveal({
       initial={{ opacity: 0, scale: 0.88, y: 18 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       className={`relative flex min-h-[58vh] w-full max-w-5xl flex-col items-center justify-center overflow-hidden rounded-[2rem] border text-center text-white shadow-2xl ${
-        isMafia
+        isMafia && !isTease
           ? 'border-red-300/55 bg-[#19080b]/95 shadow-red-950/70'
-          : 'border-sky-300/55 bg-[#071728]/95 shadow-sky-950/70'
+          : isTease
+            ? 'border-amber-300/45 bg-[#15100a]/95 shadow-amber-950/60'
+            : 'border-sky-300/55 bg-[#071728]/95 shadow-sky-950/70'
       }`}
     >
       <div
@@ -699,23 +652,23 @@ function PublicIdentityReveal({
         }}
       />
       <div className="relative z-10 flex flex-col items-center px-6 py-10 sm:px-12">
-        <p className={`text-xl font-black tracking-[0.24em] sm:text-3xl ${isMafia ? 'text-red-200' : 'text-sky-200'}`}>
+        <p className={`text-xl font-black tracking-[0.24em] sm:text-3xl ${isMafia && !isTease ? 'text-red-200' : isTease ? 'text-amber-100' : 'text-sky-200'}`}>
           {name} 님은...
         </p>
-        <div className={`relative mt-7 rounded-[2rem] p-3 ring-4 ${isMafia ? 'bg-red-950/60 ring-red-300/35' : 'bg-sky-950/60 ring-sky-300/35'}`}>
+        <div className={`relative mt-7 rounded-[2rem] p-3 ring-4 ${isMafia && !isTease ? 'bg-red-950/60 ring-red-300/35' : isTease ? 'bg-amber-950/50 ring-amber-200/30' : 'bg-sky-950/60 ring-sky-300/35'}`}>
           <CharacterAvatar
             avatarId={avatarId}
             isAlive
             role={role}
-            revealRole
-            state={getCharacterStateForRole(role)}
+            revealRole={isFullRole}
+            state={isFullRole ? getCharacterStateForRole(role) : 'dead'}
             size={Math.max(300, Math.round(avatarSize * 0.68))}
             className={`transition-all duration-500 ${isFullRole ? 'scale-105' : 'scale-95 blur-[4px] opacity-70'}`}
           />
           {!isFullRole && (
             <div className="absolute inset-0 flex items-center justify-center rounded-[2rem] bg-black/10">
               <span className="rounded-full bg-black/60 px-5 py-2 text-sm font-black tracking-[0.2em] text-white/80">
-                정체 확인 중
+                {isTease ? '정체 추리 중' : '정체 확인 중'}
               </span>
             </div>
           )}
@@ -724,18 +677,30 @@ function PublicIdentityReveal({
           key={step}
           initial={{ opacity: 0, y: 10, filter: 'blur(6px)' }}
           animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-          className={`mt-8 text-balance text-4xl font-black leading-tight sm:text-6xl ${isMafia ? 'text-red-100' : 'text-sky-100'}`}
+          className={`mt-8 text-balance text-4xl font-black leading-tight sm:text-6xl ${
+            isFullRole
+              ? isMafia
+                ? 'text-red-100'
+                : 'text-sky-100'
+              : step === 'REVEAL_MAFIA_CHECK'
+                ? isMafia
+                  ? 'text-red-100'
+                  : 'text-sky-100'
+                : 'text-amber-50'
+          }`}
         >
           {isFullRole
             ? `${name} 님의 정체는 ${ROLE_LABELS[role]}였습니다.`
-            : isMafia
-              ? '마피아가... 맞습니다!'
-              : '마피아가... 아닙니다!'}
+            : isTease
+              ? `${name} 님은... 마피아가`
+              : `${name} 님은... 마피아가 ${isMafia ? '맞습니다!' : '아닙니다!'}`}
         </motion.h1>
         <p className="mt-5 text-base font-bold text-white/65 sm:text-xl">
           {isFullRole
             ? `직업 이미지 공개 · ${ROLE_LABELS[role]}`
-            : '잠시만 기다려 주세요...'}
+            : isTease
+              ? '교사가 다음을 누르면 결과가 공개됩니다.'
+              : '교사가 다음을 누르면 정체가 공개됩니다.'}
         </p>
       </div>
     </motion.section>
@@ -784,6 +749,7 @@ function PublicVoteResult({
   const canRevealIdentity = Boolean(
     room.revealDeathRoles !== false && result?.eliminatedRole && eliminated,
   );
+  const isMafia = result?.eliminatedRole === 'MAFIA';
   const roleLabel =
     canRevealIdentity && result?.eliminatedRole
       ? ROLE_LABELS[result.eliminatedRole]
@@ -805,12 +771,31 @@ function PublicVoteResult({
       );
       return () => window.clearTimeout(timer);
     }
+    if (identityStep === 'REVEAL_FULL_ROLE') {
+      const timer = window.setTimeout(
+        () => setIdentityStep('JAIL_CAPTURE'),
+        1500,
+      );
+      return () => window.clearTimeout(timer);
+    }
   }, [canRevealIdentity, identityStep, result?.resolvedAt]);
 
   if (!result) return null;
 
-  const isFullRole = identityStep === 'REVEAL_FULL_ROLE';
-  const isMafia = result.eliminatedRole === 'MAFIA';
+  const isFullRole =
+    identityStep === 'REVEAL_FULL_ROLE' || identityStep === 'JAIL_CAPTURE';
+
+  if (eliminated && canRevealIdentity && identityStep === 'JAIL_CAPTURE') {
+    return (
+      <JailCaptureScene
+        avatarId={eliminated.avatarId}
+        name={eliminated.name}
+        isMafia={isMafia}
+        role={result.eliminatedRole}
+        displayMode
+      />
+    );
+  }
 
   return (
     <motion.section
@@ -851,7 +836,7 @@ function PublicVoteResult({
         <div className="relative text-center lg:text-left">
           <div className="flex items-center justify-center gap-3 text-sm font-black uppercase tracking-[0.3em] text-amber-200 lg:justify-start sm:text-lg">
             <Radio className="h-7 w-7 animate-pulse" />
-            Vote Result · Arrest Alert
+            투표 체포 결과
             <Radio className="h-7 w-7 animate-pulse" />
           </div>
           <h1 className="mt-6 text-balance text-5xl font-black leading-tight text-amber-50 sm:text-7xl">
@@ -944,9 +929,13 @@ export default function HostDisplayPage() {
   const [room, setRoom] = useState<GameRoom | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const [morningIdentityStep, setMorningIdentityStep] =
-    useState<IdentityRevealStep>('NONE');
   const [displayAvatarSize, setDisplayAvatarSize] = useState(520);
+  const [joinUrl, setJoinUrl] = useState('');
+  const [pinQrExpanded, setPinQrExpanded] = useState(false);
+
+  useEffect(() => {
+    setJoinUrl(window.location.origin);
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1005,101 +994,67 @@ export default function HostDisplayPage() {
     () => (room ? fallbackPublicMorningEvents(room) : []),
     [room],
   );
-  const morningKey = useMemo(
-    () => [
-      room?.roomId,
-      room?.currentRound,
-      room?.gameState,
-      morningEvents
-        .map((event) => `${event.event}:${event.targetId ?? ''}:${event.success ?? ''}`)
-        .join(','),
-      (room?.nightResults?.deadPlayerIds ?? []).join(','),
-    ].join('|'),
-    [morningEvents, room?.currentRound, room?.gameState, room?.nightResults?.deadPlayerIds, room?.roomId],
-  );
   const morningIndex = Math.min(
     Math.max(0, room?.morningRevealIndex ?? 0),
     Math.max(0, morningEvents.length - 1),
   );
+  const morningIdentityStep: IdentityRevealStep =
+    room?.morningIdentityStep ?? 'NONE';
   const currentMorningEvent = morningEvents[morningIndex] ?? null;
   const showMorningSequence = room?.gameState === 'RESULT' && Boolean(currentMorningEvent);
   const showVoteResult =
     room?.gameState === 'VOTE_RESULT' && Boolean(room.dayVoteResult);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setMorningIdentityStep('NONE');
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [morningKey, morningIndex]);
-
-  useEffect(() => {
-    if (room?.gameState !== 'RESULT' || !currentMorningEvent) return;
-    const deadTargetId = currentMorningEvent.targetId;
-    const canRevealIdentity = Boolean(
-      currentMorningEvent.event === 'MAFIA_KILL' &&
-        deadTargetId &&
-        room.revealDeathRoles !== false &&
-        room.nightResults?.deadPlayerIds.includes(deadTargetId) &&
-        room.nightResults.deadRoles?.[deadTargetId],
-    );
-
-    if (canRevealIdentity && morningIdentityStep === 'NONE') {
-      const timer = window.setTimeout(
-        () => setMorningIdentityStep('REVEAL_MAFIA_CHECK'),
-        2600,
-      );
-      return () => window.clearTimeout(timer);
-    }
-
-    if (canRevealIdentity && morningIdentityStep === 'REVEAL_MAFIA_CHECK') {
-      const timer = window.setTimeout(
-        () => setMorningIdentityStep('REVEAL_FULL_ROLE'),
-        1900,
-      );
-      return () => window.clearTimeout(timer);
-    }
-
-    // 다음 공개(의사·기자)는 교사가 다음을 누를 때만 진행한다.
-  }, [
-    currentMorningEvent,
-    morningIdentityStep,
-    morningKey,
-    room?.gameState,
-    room?.nightResults,
-    room?.revealDeathRoles,
-  ]);
-
-  useEffect(() => {
     if (!showMorningSequence || !currentMorningEvent) return;
-    void playMorningEventSound(currentMorningEvent.event, {
+    const eventType = currentMorningEvent.event;
+    if (eventType === 'MAFIA_KILL') return;
+    if (eventType === 'REPORTER_NEWS') {
+      void playReporterNewsSound().catch(() => undefined);
+      return;
+    }
+    void playMorningEventSound(eventType, {
       success: currentMorningEvent.success,
     }).catch(() => {
       // 자동 재생이 차단되어도 서브모니터의 시각 연출은 계속 진행한다.
     });
-  }, [currentMorningEvent, showMorningSequence]);
+  }, [currentMorningEvent, showMorningSequence, morningIdentityStep]);
 
   const phase = toBackgroundPhase(room?.gameState);
 
   return (
     <GameBackground theme="VILLAGE" gameState={phase} playerCount={room && phase === 'WAITING' ? playerList(room).length : 0} className="min-h-screen">
       <div className="flex min-h-screen flex-col text-white">
-        <header className="relative z-20 flex flex-wrap items-center justify-between gap-3 px-5 py-4 sm:px-10 sm:py-6">
-          <div className="flex items-center gap-3">
-            <Monitor className="h-7 w-7 text-amber-200 sm:h-9 sm:w-9" />
+        <header className="relative z-20 flex flex-wrap items-start justify-between gap-3 px-5 py-4 sm:px-10 sm:py-6">
+          <div className="flex items-start gap-3">
+            <Monitor className="h-7 w-7 shrink-0 text-amber-200 sm:h-9 sm:w-9" />
             <div>
               <p className="text-xl font-black tracking-tight sm:text-3xl">X-Mafia</p>
-              <p className="text-[10px] font-black uppercase tracking-[0.25em] text-white/55 sm:text-xs">Public Display · 학생 공유 화면</p>
+              <p className="text-[10px] font-black tracking-[0.25em] text-white/55 sm:text-xs">
+                학생 공유 화면
+              </p>
+              {room && (
+                <HeaderPinQrPanel
+                  pin={room.pin}
+                  joinUrl={joinUrl}
+                  expanded={pinQrExpanded}
+                  onToggle={() => setPinQrExpanded((v) => !v)}
+                  variant="display"
+                />
+              )}
             </div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2 text-xs font-black sm:gap-3 sm:text-sm">
             {room && (
-              <span className="rounded-full bg-amber-400/95 px-3 py-1.5 font-mono text-base tracking-wider text-stone-950 sm:px-4 sm:py-2 sm:text-xl">
-                PIN {formatPin(room.pin)}
+              <span className="rounded-full bg-black/35 px-3 py-1.5 ring-1 ring-white/15">
+                {STATE_LABELS[room.gameState]}
               </span>
             )}
-            {room && <span className="rounded-full bg-black/35 px-3 py-1.5 ring-1 ring-white/15">{STATE_LABELS[room.gameState]}</span>}
-            {room && room.gameState !== 'WAITING' && <span className="rounded-full bg-amber-400/90 px-3 py-1.5 font-mono text-stone-900">ROUND {room.currentRound} / {room.maxRounds}</span>}
+            {room && room.gameState !== 'WAITING' && (
+              <span className="rounded-full bg-amber-400/90 px-3 py-1.5 font-mono text-stone-900">
+                ROUND {room.currentRound} / {room.maxRounds}
+              </span>
+            )}
           </div>
         </header>
 
@@ -1123,7 +1078,7 @@ export default function HostDisplayPage() {
           ) : room && showMorningSequence && currentMorningEvent ? (
             <AnimatePresence mode="wait">
               <PublicMorningEvent
-                key={`${currentMorningEvent.event}-${morningIndex}`}
+                key={`${currentMorningEvent.event}-${morningIndex}-${morningIdentityStep}`}
                 event={currentMorningEvent}
                 room={room}
                 avatarSize={displayAvatarSize}

@@ -304,6 +304,15 @@ export interface GameRoom {
    * 교사가 다음을 눌러 사망자 → 의사 → 기자 순으로 수동 진행한다.
    */
   morningRevealIndex: number;
+  /**
+   * 사망자 직업 공개 세부 단계.
+   * NONE(사망 안내) → TEASE(마피아가…) → REVEAL_MAFIA_CHECK(맞습니다/아닙니다) → REVEAL_FULL_ROLE(정체)
+   */
+  morningIdentityStep:
+    | 'NONE'
+    | 'TEASE'
+    | 'REVEAL_MAFIA_CHECK'
+    | 'REVEAL_FULL_ROLE';
   gmEvent: GmEvent;
   votes: Record<string, string>;
   matchEndsAt: number | null;
@@ -359,6 +368,10 @@ export interface GameRoom {
     REPORTER: number;
     SPIRITUALIST: number;
   } | null;
+  /**
+   * 직업별 밤 퀴즈 미리보기 허용. ON일 때만 해당 직업 학생에게 pending 퀴즈 노출.
+   */
+  nightQuizPreviewByRole: Record<Role, boolean>;
 }
 
 /** 밤 시작 시 퀴즈 설정 */

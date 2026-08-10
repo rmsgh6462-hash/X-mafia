@@ -72,6 +72,7 @@ export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
     currentHint: null,
     nightResults: null,
     morningRevealIndex: 0,
+    morningIdentityStep: 'NONE',
     gmEvent: null,
     votes: {},
     matchEndsAt: null,
@@ -96,6 +97,18 @@ export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
     nicknameChangeRequest: null,
     pendingRoleAssignments: null,
     roleCountConfig: null,
+    nightQuizPreviewByRole: defaultNightQuizPreviewByRole(),
+  };
+}
+
+export function defaultNightQuizPreviewByRole(): Record<Role, boolean> {
+  return {
+    CITIZEN: false,
+    MAFIA: false,
+    DOCTOR: false,
+    POLICE: false,
+    REPORTER: false,
+    SPIRITUALIST: false,
   };
 }
 
@@ -276,6 +289,20 @@ export function savePendingNightQuizConfig(
   };
 }
 
+export function setNightQuizPreviewForRole(
+  room: GameRoom,
+  role: Role,
+  enabled: boolean,
+): GameRoom {
+  return {
+    ...room,
+    nightQuizPreviewByRole: {
+      ...normalizeNightQuizPreviewByRole(room.nightQuizPreviewByRole),
+      [role]: enabled,
+    },
+  };
+}
+
 /**
  * 밤 시작에 쓸 퀴즈 설정.
  * 저장된 미션이 있으면 그대로 쓰고, 없으면 직전 밤 설정/기본값으로 생성한다.
@@ -326,6 +353,7 @@ export function normalizeGameRoom(room: GameRoom): GameRoom {
     currentHint: room.currentHint ?? null,
     nightResults: room.nightResults ?? null,
     morningRevealIndex: Math.max(0, room.morningRevealIndex ?? 0),
+    morningIdentityStep: normalizeMorningIdentityStep(room.morningIdentityStep),
     gmEvent: room.gmEvent ?? null,
     votes: room.votes ?? {},
     matchEndsAt: room.matchEndsAt ?? null,
@@ -353,7 +381,38 @@ export function normalizeGameRoom(room: GameRoom): GameRoom {
       room.pendingRoleAssignments,
     ),
     roleCountConfig: normalizeRoleCountConfig(room.roleCountConfig),
+    nightQuizPreviewByRole: normalizeNightQuizPreviewByRole(
+      room.nightQuizPreviewByRole,
+    ),
   };
+}
+
+function normalizeNightQuizPreviewByRole(
+  raw: GameRoom['nightQuizPreviewByRole'] | null | undefined,
+): Record<Role, boolean> {
+  const defaults = defaultNightQuizPreviewByRole();
+  if (!raw || typeof raw !== 'object') return defaults;
+  return {
+    CITIZEN: raw.CITIZEN === true,
+    MAFIA: raw.MAFIA === true,
+    DOCTOR: raw.DOCTOR === true,
+    POLICE: raw.POLICE === true,
+    REPORTER: raw.REPORTER === true,
+    SPIRITUALIST: raw.SPIRITUALIST === true,
+  };
+}
+
+function normalizeMorningIdentityStep(
+  raw: GameRoom['morningIdentityStep'] | null | undefined,
+): GameRoom['morningIdentityStep'] {
+  if (
+    raw === 'TEASE' ||
+    raw === 'REVEAL_MAFIA_CHECK' ||
+    raw === 'REVEAL_FULL_ROLE'
+  ) {
+    return raw;
+  }
+  return 'NONE';
 }
 
 function normalizeRoleCountConfig(

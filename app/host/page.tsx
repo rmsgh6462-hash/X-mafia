@@ -24,6 +24,7 @@ import {
 import GameBackground, {
   type BackgroundPhase,
 } from '@/components/GameBackground';
+import { HeaderPinQrPanel } from '@/components/common/HeaderPinQrPanel';
 import { GmPanel } from '@/components/host/GmPanel';
 import { GhostChatMonitor } from '@/components/host/GhostChatMonitor';
 import { MatchChatMonitor } from '@/components/host/MatchChatMonitor';
@@ -32,6 +33,7 @@ import {
   MafiaMissionAssignForm,
   NightQuizConfigForm,
   NightQuizMonitor,
+  NightQuizPreviewTogglePanel,
 } from '@/components/host/MissionAssignPanel';
 import { HostLobbyRoster } from '@/components/host/HostLobbyRoster';
 import { NightActivityBoard } from '@/components/host/NightActivityBoard';
@@ -89,6 +91,7 @@ import {
   savePendingNightQuizConfig,
   saveRoleSetup,
   saveRoom,
+  setNightQuizPreviewForRole,
   setVoteTieResolution,
   setRevealDeathRoles,
   setAllowMafiaTargetMafia,
@@ -172,6 +175,7 @@ export default function HostPage() {
   const [roleBoardOpen, setRoleBoardOpen] = useState(false);
   const [nightConfigOpen, setNightConfigOpen] = useState(false);
   const [mafiaMissionOpen, setMafiaMissionOpen] = useState(false);
+  const [pinQrExpanded, setPinQrExpanded] = useState(false);
   const [morningSequenceOpen, setMorningSequenceOpen] = useState(false);
   const prevStateRef = useRef<GameState | null>(null);
   const roomIdRef = useRef<string | null>(null);
@@ -650,9 +654,13 @@ export default function HostPage() {
 
           <div className="flex items-center gap-2 text-sm md:text-base">
             {room && (
-              <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-400/90 px-3 py-1.5 font-mono font-black tracking-wider text-stone-900 backdrop-blur-sm">
-                PIN {formatPin(room.pin)}
-              </span>
+              <HeaderPinQrPanel
+                pin={room.pin}
+                joinUrl={joinUrl}
+                expanded={pinQrExpanded}
+                onToggle={() => setPinQrExpanded((v) => !v)}
+                variant="host"
+              />
             )}
             {room && (
               <button
@@ -989,7 +997,7 @@ export default function HostPage() {
               <StagePanel key="vote-result" title="투표 결과 발표">
                 <div className="mx-auto max-w-2xl rounded-2xl bg-red-950/45 p-6 text-center ring-1 ring-red-300/25">
                   <p className="text-xs font-black uppercase tracking-[0.24em] text-amber-200/80">
-                    Vote Result · Display 진행 중
+                    투표 결과 · 서브모니터 연출 중
                   </p>
                   <p className="mt-4 text-2xl font-black text-white md:text-4xl">
                     {room.dayVoteResult?.announcement ?? '이번 투표에서 탈락자는 없습니다.'}
@@ -1399,6 +1407,17 @@ export default function HostPage() {
                   speak('밤 미션을 저장했습니다.');
                 }}
               />
+              <div className="mt-5">
+                <NightQuizPreviewTogglePanel
+                  previewByRole={room.nightQuizPreviewByRole}
+                  busy={busy}
+                  onToggle={(role, enabled) => {
+                    void runAction((r) =>
+                      setNightQuizPreviewForRole(r, role, enabled),
+                    );
+                  }}
+                />
+              </div>
             </div>
           </div>
         )}
@@ -1474,9 +1493,11 @@ export default function HostPage() {
             players={room.players}
             revealRoles={room.revealDeathRoles !== false}
             controlledIndex={room.morningRevealIndex ?? 0}
+            controlledIdentityStep={room.morningIdentityStep ?? 'NONE'}
             onClose={() => setMorningSequenceOpen(false)}
           />
         )}
+
       </div>
     </GameBackground>
   );
@@ -1618,10 +1639,28 @@ function MorningResultStage({
     Math.max(0, revealTotal - 1),
   );
   const currentReveal = revealQueue[revealIndex] ?? null;
-  const canAdvanceReveal = revealTotal > 0 && revealIndex < revealTotal - 1;
+  const identityStep = room.morningIdentityStep ?? 'NONE';
+  const canRevealIdentity = Boolean(
+    currentReveal?.event === 'MAFIA_KILL' &&
+      currentReveal.targetId &&
+      reveal &&
+      deadIds.includes(currentReveal.targetId) &&
+      deadRoles[currentReveal.targetId],
+  );
+  const identityIncomplete =
+    canRevealIdentity && identityStep !== 'REVEAL_FULL_ROLE';
+  const canAdvanceReveal =
+    revealTotal > 0 &&
+    (identityIncomplete || revealIndex < revealTotal - 1);
   const revealStepLabel =
     currentReveal?.event === 'MAFIA_KILL'
-      ? '사망자 공개'
+      ? identityStep === 'NONE'
+        ? '사망자 공개'
+        : identityStep === 'TEASE'
+          ? '마피아 여부 추리'
+          : identityStep === 'REVEAL_MAFIA_CHECK'
+            ? '마피아 여부 공개'
+            : '정체 공개'
       : currentReveal?.event === 'DOCTOR_DEFEND'
         ? '의사 활약 공개'
         : currentReveal?.event === 'DOCTOR_IDLE'
@@ -1953,7 +1992,8 @@ function MorningResultStage({
                   {revealStepLabel ?? '공개'} ({revealIndex + 1}/{revealTotal})
                 </p>
                 <p className="mt-1 text-xs text-white/55">
-                  자동으로 넘어가지 않습니다. 다음을 눌러 공개를 진행하세요.
+                  사망자 정체는 「마피아가」→「맞습니다/아닙니다」→「정체」순으로
+                  다음을 눌러 공개합니다.
                 </p>
                 <button
                   type="button"
@@ -1961,7 +2001,7 @@ function MorningResultStage({
                   onClick={onAdvanceReveal}
                   className="mt-3 rounded-xl bg-amber-400 px-6 py-3 text-sm font-black text-stone-900 hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {canAdvanceReveal ? '다음 공개' : '마지막 공개 중'}
+                  {canAdvanceReveal ? '다음' : '마지막 공개 중'}
                 </button>
               </div>
             )}

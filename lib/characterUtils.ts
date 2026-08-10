@@ -29,6 +29,26 @@ export const CHARACTER_STATES: CharacterState[] = [
   'arrested',
 ];
 
+/** 실제 플레이어를 가리지 않고 사용할 수 있는 공통 이벤트 일러스트. */
+export type EventIllustrationKind =
+  | 'doctor_idle'
+  | 'doctor_fail'
+  | 'reporter_idle'
+  | 'anonymous_reporter';
+
+const EVENT_ILLUSTRATION_PATHS: Record<EventIllustrationKind, string> = {
+  doctor_idle: '/images/events/doctor_idle_generic.png',
+  doctor_fail: '/images/events/doctor_fail_generic.png',
+  reporter_idle: '/images/events/reporter_idle_generic.png',
+  anonymous_reporter: '/images/events/anonymous_reporter.png',
+};
+
+export function getEventIllustrationPath(
+  kind: EventIllustrationKind,
+): string {
+  return EVENT_ILLUSTRATION_PATHS[kind];
+}
+
 /** 캐릭터 상태별 정적 이미지 경로를 만든다. 실제 파일 누락은 렌더러에서 normal로 보정한다. */
 export function getCharacterImage(
   characterId: string,

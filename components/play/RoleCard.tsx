@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Sparkles, Users } from 'lucide-react';
+import { Eye, EyeOff, Sparkles, Users } from 'lucide-react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { ROLE_ACCENTS, ROLE_BLURBS, ROLE_LABELS } from '@/lib/game/roles';
 import { type CharacterViewerRole } from '@/lib/characterUtils';
@@ -15,7 +15,6 @@ export function RoleCard({
   nightQuiz,
   mafiaMission,
   mafiaAllies = [],
-  revealed,
   playerId = null,
   viewerRole = role,
   viewerPlayerId = playerId,
@@ -27,8 +26,6 @@ export function RoleCard({
   mafiaMission?: MafiaMissionState | null;
   /** 마피아만 — 다른 마피아 동료 목록 */
   mafiaAllies?: Player[];
-  /** 외부 역할 공개 연출에서 확인 완료된 경우 카드 앞면을 유지한다. */
-  revealed?: boolean;
   /** 역할 카드의 대상 플레이어 ID */
   playerId?: string | null;
   /** 현재 역할 카드를 보는 주체. 기본값은 본인 역할이다. */
@@ -38,22 +35,13 @@ export function RoleCard({
   const [flipped, setFlipped] = useState(false);
   const isMafia = role === 'MAFIA';
   const accent = ROLE_ACCENTS[role];
-  const isRevealed = revealed ?? flipped;
 
   return (
-    <div className="w-full max-w-sm perspective-[1200px]">
-      <button
-        type="button"
-        onClick={() => {
-          if (revealed === undefined) setFlipped((v) => !v);
-        }}
-        className="relative h-72 w-full cursor-pointer text-left outline-none transition hover:brightness-105 focus-visible:ring-2 focus-visible:ring-amber-400/50 sm:h-80"
-        style={{ transformStyle: 'preserve-3d' }}
-        aria-label="직업 카드 뒤집기"
-      >
+    <div className="w-full max-w-sm">
+      <div className="perspective-[1200px]">
         <motion.div
-          className="absolute inset-0"
-          animate={{ rotateY: isRevealed ? 180 : 0 }}
+          className="relative h-72 w-full sm:h-80"
+          animate={{ rotateY: flipped ? 180 : 0 }}
           transition={{ duration: 0.65, ease: [0.4, 0.1, 0.2, 1] }}
           style={{ transformStyle: 'preserve-3d' }}
         >
@@ -63,7 +51,7 @@ export function RoleCard({
           >
             <Sparkles className="mb-4 h-11 w-11 text-amber-300" />
             <p className="text-xl font-black tracking-wide text-white">비밀 직업</p>
-            <p className="mt-3 text-sm text-white/55">클릭 / 탭하여 확인</p>
+            <p className="mt-3 text-sm text-white/55">아래 버튼으로 확인하세요</p>
           </div>
 
           <div
@@ -74,8 +62,8 @@ export function RoleCard({
               background: `linear-gradient(160deg, ${accent}, #1c1917 70%)`,
             }}
           >
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/70">
-              Your Role
+            <p className="text-[11px] font-semibold tracking-[0.16em] text-white/70">
+              나의 직업
             </p>
             <h2 className="mt-1 text-3xl font-black text-white">
               {ROLE_LABELS[role]}
@@ -97,8 +85,8 @@ export function RoleCard({
                   size={64}
                 />
                 <div className="min-w-0">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/45">
-                    현재 캐릭터 상태
+                  <p className="text-[10px] font-bold tracking-wide text-white/45">
+                    현재 캐릭터
                   </p>
                   <p className="mt-1 truncate text-sm font-black text-white">
                     {ROLE_LABELS[role]} 캐릭터
@@ -150,7 +138,7 @@ export function RoleCard({
                 {nightQuiz?.question && (
                   <div className="rounded-lg bg-black/35 px-2.5 py-2">
                     <p className="text-[10px] font-bold text-amber-200">
-                      밤 퀴즈 (참고)
+                      밤 퀴즈 (진행 중)
                     </p>
                     <p className="text-[11px] leading-snug text-white/90">
                       {nightQuiz.question}
@@ -169,15 +157,30 @@ export function RoleCard({
                 )}
               </div>
             )}
-
-            {!isMafia && (
-              <p className="mt-auto text-[11px] text-white/50">
-                동일 직업 동료의 정체는 알 수 없습니다 · 다시 탭하면 숨깁니다
-              </p>
-            )}
           </div>
         </motion.div>
-      </button>
+      </div>
+
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          disabled={flipped}
+          onClick={() => setFlipped(true)}
+          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-amber-400 py-2.5 text-sm font-black text-stone-900 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Eye className="h-4 w-4" />
+          직업 카드 보기
+        </button>
+        <button
+          type="button"
+          disabled={!flipped}
+          onClick={() => setFlipped(false)}
+          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-white/10 py-2.5 text-sm font-bold text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <EyeOff className="h-4 w-4" />
+          카드 다시 덮기
+        </button>
+      </div>
     </div>
   );
 }

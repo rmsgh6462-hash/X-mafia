@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
+import { JailCaptureScene } from '@/components/play/JailCaptureScene';
 import { Popup } from '@/components/play/Popup';
 import { getCharacterStateForRole } from '@/lib/characterUtils';
 import { ROLE_LABELS } from '@/lib/game/roles';
@@ -10,7 +11,8 @@ import type { DayVoteResult, Player } from '@/types/game';
 type IdentityRevealStep =
   | 'NONE'
   | 'REVEAL_MAFIA_CHECK'
-  | 'REVEAL_FULL_ROLE';
+  | 'REVEAL_FULL_ROLE'
+  | 'JAIL_CAPTURE';
 
 export function VoteResultModal({
   open,
@@ -30,7 +32,9 @@ export function VoteResultModal({
   const canRevealIdentity = Boolean(
     open && revealRoles && result?.eliminatedRole && eliminatedPlayer,
   );
-  const isFullRole = revealRoles && identityStep === 'REVEAL_FULL_ROLE';
+  const isFullRole =
+    revealRoles &&
+    (identityStep === 'REVEAL_FULL_ROLE' || identityStep === 'JAIL_CAPTURE');
   const isMafia = result?.eliminatedRole === 'MAFIA';
 
   useEffect(() => {
@@ -51,6 +55,14 @@ export function VoteResultModal({
       );
       return () => window.clearTimeout(timer);
     }
+
+    if (identityStep === 'REVEAL_FULL_ROLE') {
+      const timer = window.setTimeout(
+        () => setIdentityStep('JAIL_CAPTURE'),
+        1500,
+      );
+      return () => window.clearTimeout(timer);
+    }
   }, [canRevealIdentity, eliminatedPlayer?.id, identityStep, result?.resolvedAt]);
 
   return (
@@ -60,6 +72,14 @@ export function VoteResultModal({
       accent="red"
       onClose={onClose}
     >
+      {canRevealIdentity && eliminatedPlayer && identityStep === 'JAIL_CAPTURE' ? (
+        <JailCaptureScene
+          avatarId={eliminatedPlayer.avatarId}
+          name={eliminatedPlayer.name}
+          isMafia={isMafia}
+          role={result?.eliminatedRole}
+        />
+      ) : (
       <div className="relative overflow-hidden rounded-2xl border border-amber-200/20 bg-[#100b18] p-3 shadow-inner shadow-black/40">
         <div className="pointer-events-none absolute inset-0 opacity-80 [background:repeating-linear-gradient(90deg,transparent_0,transparent_9%,rgba(226,232,240,.05)_9.4%,rgba(226,232,240,.52)_10%,rgba(15,23,42,.9)_11%,transparent_12%,transparent_21%)]" />
         <div className="pointer-events-none absolute inset-x-1/4 top-[-30%] h-2/3 rounded-full bg-amber-100/15 blur-3xl" />
@@ -114,6 +134,7 @@ export function VoteResultModal({
           )}
         </div>
       </div>
+      )}
     </Popup>
   );
 }

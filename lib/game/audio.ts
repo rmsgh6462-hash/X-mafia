@@ -1,12 +1,14 @@
+import {
+  playDayBgm,
+  playGunshot,
+  playNightBgm,
+  playReporterNewsSound,
+  setSfxBlocked,
+  stopSoundscape,
+} from '@/lib/audioManager';
 import type { GameState, MorningEvent, Role } from '@/types/game';
-import { playGunshotSound } from '@/lib/utils/sound';
 
 type BgmBed = 'day' | 'night';
-
-const BGM_ASSETS: Record<BgmBed, string> = {
-  day: '/sounds/bgm-day.wav',
-  night: '/sounds/bgm-night.wav',
-};
 
 const STATE_TO_BED: Partial<Record<GameState, BgmBed>> = {
   WAITING: 'day',
@@ -32,18 +34,8 @@ const TTS_SCRIPTS: Partial<Record<GameState, string>> = {
   ENDED: '게임이 종료되었습니다.',
 };
 
-const BGM_VOLUME: Record<BgmBed, number> = {
-  day: 0.42,
-  night: 0.48,
-};
-
-const CROSSFADE_MS = 1400;
-
 let audioCtx: AudioContext | null = null;
 let currentState: GameState | null = null;
-let currentBed: BgmBed | null = null;
-let activeBedAudio: HTMLAudioElement | null = null;
-let fadingOut: HTMLAudioElement[] = [];
 /** 교사 화면에서 명시적으로 켠 뒤에만 단계 BGM을 재생한다. */
 let bgmEnabled = false;
 /** 교사 화면에서 명시적으로 끈 경우에만 효과음까지 막는다. 학생 기기는 기본이라 연출음이 난다. */
@@ -69,85 +61,6 @@ function bedForState(state: GameState): BgmBed {
   return STATE_TO_BED[state] ?? 'day';
 }
 
-function fadeAudioVolume(
-  audio: HTMLAudioElement,
-  from: number,
-  to: number,
-  ms: number,
-): Promise<void> {
-  return new Promise((resolve) => {
-    const started = performance.now();
-    const tick = (now: number) => {
-      const t = Math.min(1, (now - started) / ms);
-      const curved = t * t * (3 - 2 * t);
-      audio.volume = Math.max(0, Math.min(1, from + (to - from) * curved));
-      if (t < 1) {
-        requestAnimationFrame(tick);
-      } else {
-        resolve();
-      }
-    };
-    requestAnimationFrame(tick);
-  });
-}
-
-function stopBedAudio(audio: HTMLAudioElement | null) {
-  if (!audio) return;
-  try {
-    audio.pause();
-    audio.src = '';
-  } catch {
-    /* ignore */
-  }
-}
-
-function stopBgm() {
-  fadingOut.forEach(stopBedAudio);
-  fadingOut = [];
-  stopBedAudio(activeBedAudio);
-  activeBedAudio = null;
-  currentBed = null;
-}
-
-async function startBed(bed: BgmBed) {
-  if (currentBed === bed && activeBedAudio && !activeBedAudio.paused) {
-    return;
-  }
-
-  const next = new Audio(BGM_ASSETS[bed]);
-  next.loop = true;
-  next.preload = 'auto';
-  next.volume = 0;
-
-  const previous = activeBedAudio;
-  activeBedAudio = next;
-  currentBed = bed;
-
-  try {
-    await next.play();
-  } catch {
-    // 자동재생이 막히면 조용히 포기 (교사 토글 제스처 후 재시도됨)
-    if (activeBedAudio === next) {
-      activeBedAudio = null;
-      currentBed = null;
-    }
-    stopBedAudio(next);
-    return;
-  }
-
-  const target = BGM_VOLUME[bed];
-  void fadeAudioVolume(next, 0, target, CROSSFADE_MS);
-
-  if (previous) {
-    fadingOut.push(previous);
-    const from = previous.volume;
-    void fadeAudioVolume(previous, from, 0, CROSSFADE_MS).then(() => {
-      stopBedAudio(previous);
-      fadingOut = fadingOut.filter((a) => a !== previous);
-    });
-  }
-}
-
 export function isBgmEnabled(): boolean {
   return bgmEnabled && !bgmForcedOff;
 }
@@ -163,15 +76,15 @@ export async function setBgmEnabled(
 ): Promise<void> {
   bgmEnabled = enabled;
   bgmForcedOff = !enabled;
+  setSfxBlocked(!enabled);
   if (!enabled) {
-    stopBgm();
+    stopSoundscape();
     currentState = null;
     return;
   }
   await resumeCtx();
   if (state) {
     currentState = null;
-    currentBed = null;
     await playPhaseBgm(state);
   }
 }
@@ -190,18 +103,23 @@ export async function setNarrationEnabled(enabled: boolean): Promise<void> {
   }
 }
 
-/** GameState 변경 시 분위기 BGM 전환 (아침·낮 = 새/물, 밤 = 까마귀) */
+/** GameState 변경 시 분위기 BGM + 환경음 soundscape 전환 */
 export async function playPhaseBgm(state: GameState) {
   if (typeof window === 'undefined') return;
   if (!bgmEnabled || bgmForcedOff) return;
-  if (currentState === state && activeBedAudio && !activeBedAudio.paused) return;
+  if (currentState === state) return;
 
   await resumeCtx().catch(() => {
     /* HTMLAudio만으로도 재생 가능 */
   });
 
   currentState = state;
-  await startBed(bedForState(state));
+  const bed = bedForState(state);
+  if (bed === 'night') {
+    await playNightBgm();
+  } else {
+    await playDayBgm();
+  }
 }
 
 export function speakPhase(state: GameState, customText?: string) {
@@ -228,20 +146,15 @@ export function speak(text: string) {
   window.speechSynthesis.speak(utter);
 }
 
-/** 아침 결과 팝업의 짧은 효과음. 브라우저 오디오 정책에 막혀도 게임은 계속 진행된다. */
+/** 아침 결과 팝업 효과음 (마피아 습격·기자 신문은 전용 연출에서 처리) */
 export async function playMorningEventSound(
   event: MorningEvent,
   options: { success?: boolean } = {},
 ) {
-  if (typeof window === 'undefined') return;
-  if (bgmForcedOff) return;
+  if (typeof window === 'undefined' || bgmForcedOff) return;
 
-  if (event === 'MAFIA_KILL') {
-    await playGunshotSound(0.52);
-    return;
-  }
+  if (event === 'MAFIA_KILL' || event === 'REPORTER_NEWS') return;
 
-  // 의사 허탕은 구조 성공음보다 짧고 가벼운 하강음으로 구분한다.
   if (event === 'DOCTOR_DEFEND' && options.success !== true) {
     try {
       const ctx = await resumeCtx();
@@ -265,7 +178,7 @@ export async function playMorningEventSound(
       });
       return;
     } catch {
-      // 자동 재생이 차단된 경우에도 시각 연출은 계속 진행한다.
+      /* 자동 재생이 차단된 경우에도 시각 연출은 계속 진행한다. */
     }
   }
 
@@ -273,23 +186,16 @@ export async function playMorningEventSound(
     const ctx = await resumeCtx();
 
     const now = ctx.currentTime;
-    const notes: Record<MorningEvent, { freq: number; offset: number; duration: number; type: OscillatorType }[]> = {
-      REPORTER_NEWS: [
-        { freq: 1850, offset: 0, duration: 0.07, type: 'square' },
-        { freq: 1250, offset: 0.09, duration: 0.1, type: 'square' },
-        { freq: 920, offset: 0.34, duration: 0.035, type: 'square' },
-        { freq: 1040, offset: 0.41, duration: 0.035, type: 'square' },
-        { freq: 920, offset: 0.48, duration: 0.035, type: 'square' },
-        { freq: 1040, offset: 0.55, duration: 0.035, type: 'square' },
-      ],
+    const notes: Record<
+      MorningEvent,
+      { freq: number; offset: number; duration: number; type: OscillatorType }[]
+    > = {
+      REPORTER_NEWS: [],
       REPORTER_IDLE: [
         { freq: 460, offset: 0, duration: 0.16, type: 'triangle' },
         { freq: 360, offset: 0.18, duration: 0.22, type: 'triangle' },
       ],
-      MAFIA_KILL: [
-        { freq: 120, offset: 0, duration: 0.24, type: 'sawtooth' },
-        { freq: 78, offset: 0.06, duration: 0.3, type: 'sine' },
-      ],
+      MAFIA_KILL: [],
       DOCTOR_DEFEND: [
         { freq: 392, offset: 0, duration: 0.18, type: 'triangle' },
         { freq: 523, offset: 0.12, duration: 0.24, type: 'triangle' },
@@ -300,7 +206,10 @@ export async function playMorningEventSound(
       ],
     };
 
-    notes[event].forEach(({ freq, offset, duration, type }) => {
+    const sequence = notes[event];
+    if (!sequence?.length) return;
+
+    sequence.forEach(({ freq, offset, duration, type }) => {
       const oscillator = ctx.createOscillator();
       const gain = ctx.createGain();
       oscillator.type = type;
@@ -314,7 +223,52 @@ export async function playMorningEventSound(
       oscillator.stop(now + offset + duration + 0.02);
     });
   } catch {
-    // 자동 재생이 차단된 브라우저에서는 시각 효과만 표시한다.
+    /* 자동 재생이 차단된 브라우저에서는 시각 효과만 표시한다. */
+  }
+}
+
+/** 마피아 체포 후 감옥 컷씬의 짧은 사이렌·철창 효과음. */
+export async function playMafiaJailSound(): Promise<void> {
+  if (typeof window === 'undefined' || bgmForcedOff) return;
+
+  try {
+    const ctx = await resumeCtx();
+    const now = ctx.currentTime;
+    const siren = [
+      { freq: 540, offset: 0, duration: 0.28 },
+      { freq: 760, offset: 0.28, duration: 0.32 },
+      { freq: 540, offset: 0.62, duration: 0.28 },
+      { freq: 760, offset: 0.9, duration: 0.32 },
+    ];
+
+    siren.forEach(({ freq, offset, duration }) => {
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = 'sawtooth';
+      oscillator.frequency.setValueAtTime(freq, now + offset);
+      gain.gain.setValueAtTime(0.0001, now + offset);
+      gain.gain.exponentialRampToValueAtTime(0.06, now + offset + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + duration);
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start(now + offset);
+      oscillator.stop(now + offset + duration + 0.03);
+    });
+
+    const clang = ctx.createOscillator();
+    const clangGain = ctx.createGain();
+    clang.type = 'square';
+    clang.frequency.setValueAtTime(180, now + 0.78);
+    clang.frequency.exponentialRampToValueAtTime(72, now + 1.04);
+    clangGain.gain.setValueAtTime(0.0001, now + 0.78);
+    clangGain.gain.exponentialRampToValueAtTime(0.08, now + 0.8);
+    clangGain.gain.exponentialRampToValueAtTime(0.0001, now + 1.08);
+    clang.connect(clangGain);
+    clangGain.connect(ctx.destination);
+    clang.start(now + 0.78);
+    clang.stop(now + 1.1);
+  } catch {
+    /* 자동 재생 정책에 막히면 시각 연출만 계속한다. */
   }
 }
 
@@ -350,12 +304,14 @@ export async function playRoleRevealSound(role: Role): Promise<void> {
       oscillator.stop(now + offset + duration + 0.02);
     });
   } catch {
-    // 브라우저 자동 재생이 차단되어도 카드 뒤집기 연출은 계속한다.
+    /* 브라우저 자동 재생이 차단되어도 카드 뒤집기 연출은 계속한다. */
   }
 }
 
+export { playGunshot, playReporterNewsSound };
+
 export function stopAllAudio() {
-  stopBgm();
+  stopSoundscape();
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }

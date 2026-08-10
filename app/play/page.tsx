@@ -31,9 +31,11 @@ import {
 import { PlayerRoster } from '@/components/play/PlayerRoster';
 import { NicknameChangeModal } from '@/components/play/NicknameChangeModal';
 import { Popup } from '@/components/play/Popup';
+import { NightQuizPreviewCard } from '@/components/play/NightQuizPreviewCard';
 import { RoleCard } from '@/components/play/RoleCard';
 import { RoleRevealAnimation } from '@/components/play/RoleRevealAnimation';
 import { VoteResultModal } from '@/components/play/VoteResultModal';
+import { ROLE_LABELS } from '@/lib/game/roles';
 import {
   isAvatarId,
   playerGenderFromAvatarId,
@@ -41,7 +43,6 @@ import {
   type AvatarId,
 } from '@/lib/game/avatars';
 import { isFirebaseConfigured } from '@/lib/firebase';
-import { ROLE_LABELS } from '@/lib/game/roles';
 import {
   alivePlayers,
   castVote,
@@ -352,6 +353,7 @@ function PlayPageInner() {
       room.roomId,
       room.currentRound,
       room.morningRevealIndex ?? 0,
+      room.morningIdentityStep ?? 'NONE',
       morningEvents.join(','),
       morningActiveEvents.map((e) => e.event).join(','),
       (room.nightResults?.deadPlayerIds ?? []).join(','),
@@ -364,6 +366,7 @@ function PlayPageInner() {
     room?.gameState,
     room?.nightResults,
     room?.morningRevealIndex,
+    room?.morningIdentityStep,
     room,
     me,
     morningEvents,
@@ -722,7 +725,6 @@ function PlayPageInner() {
                     role={me.role}
                     avatarId={me.avatarId}
                     isAlive={me.isAlive}
-                    revealed={roleRevealComplete}
                     nightQuiz={room.nightQuizState}
                     mafiaMission={room.mafiaMissionState}
                     mafiaAllies={mafiaAllies}
@@ -754,6 +756,17 @@ function PlayPageInner() {
                 </motion.section>
               )}
             </AnimatePresence>
+
+            {me.role &&
+              me.isAlive &&
+              room.pendingNightQuizConfig &&
+              room.nightQuizPreviewByRole?.[me.role] &&
+              !room.nightQuizState?.active && (
+                <NightQuizPreviewCard
+                  config={room.pendingNightQuizConfig}
+                  roleLabel={ROLE_LABELS[me.role]}
+                />
+              )}
 
             {room.gameState === 'DAY_MATCH' && (
               <>
@@ -913,6 +926,7 @@ function PlayPageInner() {
           players={room.players}
           revealRoles={room.revealDeathRoles !== false}
           controlledIndex={room.morningRevealIndex ?? 0}
+          controlledIdentityStep={room.morningIdentityStep ?? 'NONE'}
           onClose={() => setMorningResultOpen(false)}
         />
       )}

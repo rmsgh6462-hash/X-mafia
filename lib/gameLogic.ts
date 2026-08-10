@@ -359,6 +359,7 @@ export function resolveNight(
     players: nextPlayers,
     nightResults,
     morningRevealIndex: 0,
+    morningIdentityStep: 'NONE',
     currentHint: quizHint ?? nextRoom.currentHint ?? null,
     gameState: 'RESULT',
     votes: {},
@@ -422,13 +423,33 @@ export function dismissMorningResult(room: GameRoom): GameRoom {
     ...room,
     gameState: 'DAY_TALK',
     morningRevealIndex: 0,
+    morningIdentityStep: 'NONE',
     gmEvent: room.gmEvent === 'REVIVE_NIGHT' ? 'REVIVE_NIGHT' : null,
   });
 }
 
+function currentMorningEvent(room: GameRoom) {
+  const events = room.nightResults?.activeEvents ?? [];
+  if (events.length === 0) return null;
+  const index = Math.min(
+    Math.max(0, room.morningRevealIndex ?? 0),
+    events.length - 1,
+  );
+  return events[index] ?? null;
+}
+
+function canRevealMorningIdentity(room: GameRoom): boolean {
+  const event = currentMorningEvent(room);
+  if (!event || event.event !== 'MAFIA_KILL' || !event.targetId) return false;
+  if (room.revealDeathRoles === false) return false;
+  const deadIds = room.nightResults?.deadPlayerIds ?? [];
+  if (!deadIds.includes(event.targetId)) return false;
+  return Boolean(room.nightResults?.deadRoles?.[event.targetId]);
+}
+
 /**
- * 교사 수동 — 아침 공개 큐를 한 단계 진행 (사망자 → 의사 → 기자).
- * 이미 마지막이면 변경 없음.
+ * 교사 수동 — 아침 공개 진행.
+ * 사망자 직업 공개가 있으면 TEASE → 맞습니다/아닙니다 → 정체 공개 후 다음 이벤트로.
  */
 export function advanceMorningReveal(room: GameRoom): GameRoom {
   if (room.gameState !== 'RESULT') return room;
@@ -436,11 +457,30 @@ export function advanceMorningReveal(room: GameRoom): GameRoom {
   const legacyCount = room.nightResults?.morningEvents?.length ?? 0;
   const total = Math.max(events.length, legacyCount, 0);
   if (total <= 0) return room;
+
   const current = Math.max(0, room.morningRevealIndex ?? 0);
-  if (current >= total - 1) return room;
+  const step = room.morningIdentityStep ?? 'NONE';
+
+  if (canRevealMorningIdentity(room)) {
+    if (step === 'NONE') {
+      return { ...room, morningIdentityStep: 'TEASE' };
+    }
+    if (step === 'TEASE') {
+      return { ...room, morningIdentityStep: 'REVEAL_MAFIA_CHECK' };
+    }
+    if (step === 'REVEAL_MAFIA_CHECK') {
+      return { ...room, morningIdentityStep: 'REVEAL_FULL_ROLE' };
+    }
+    // REVEAL_FULL_ROLE → 다음 이벤트
+  }
+
+  if (current >= total - 1) {
+    return { ...room, morningIdentityStep: 'REVEAL_FULL_ROLE' };
+  }
   return {
     ...room,
     morningRevealIndex: current + 1,
+    morningIdentityStep: 'NONE',
   };
 }
 

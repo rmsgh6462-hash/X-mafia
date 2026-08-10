@@ -32,6 +32,17 @@ body {
   75% { transform: translate3d(-2px, 0, 0); }
 }
 
+@keyframes morning-white-flash {
+  0% { opacity: 0; }
+  10% { opacity: 0.92; }
+  28% { opacity: 0.45; }
+  100% { opacity: 0; }
+}
+
+.morning-white-flash {
+  animation: morning-white-flash 420ms ease-out both;
+}
+
 @keyframes morning-red-flash {
   0% { opacity: 0; }
   20% { opacity: 0.35; }

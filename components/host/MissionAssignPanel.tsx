@@ -14,12 +14,67 @@ import {
 } from '@/lib/game/quizGenerator';
 import { buildMafiaMissionState, getNightQuizStats } from '@/lib/game/missions';
 import { alivePlayers } from '@/lib/game/room';
+import { ROLE_LABELS } from '@/lib/game/roles';
 import type {
   GameRoom,
   MafiaMissionAssignConfig,
   MafiaMissionType,
   NightQuizConfig,
+  Role,
 } from '@/types/game';
+
+const NIGHT_QUIZ_PREVIEW_ROLES: Role[] = [
+  'MAFIA',
+  'DOCTOR',
+  'POLICE',
+  'REPORTER',
+  'SPIRITUALIST',
+];
+
+/** 교사: 직업별 밤 퀴즈 미리보기 ON/OFF */
+export function NightQuizPreviewTogglePanel({
+  previewByRole,
+  busy,
+  onToggle,
+}: {
+  previewByRole: Record<Role, boolean>;
+  busy?: boolean;
+  onToggle: (role: Role, enabled: boolean) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/35 p-4 ring-1 ring-white/10">
+      <p className="text-sm font-black text-white">직업별 밤 퀴즈 미리보기</p>
+      <p className="mt-1 text-xs text-white/55">
+        ON인 직업만 밤 전에 저장된 퀴즈를 학생 화면에서 미리 볼 수 있습니다.
+        저장된 퀴즈가 바뀌면 학생 화면도 즉시 갱신됩니다.
+      </p>
+      <ul className="mt-3 space-y-2">
+        {NIGHT_QUIZ_PREVIEW_ROLES.map((role) => (
+          <li
+            key={role}
+            className="flex items-center justify-between gap-3 rounded-xl bg-white/5 px-3 py-2.5"
+          >
+            <span className="text-sm font-bold text-white">
+              {ROLE_LABELS[role]} 퀴즈 미리보기
+            </span>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onToggle(role, !previewByRole[role])}
+              className={`rounded-full px-3 py-1 text-xs font-black transition ${
+                previewByRole[role]
+                  ? 'bg-emerald-500 text-white'
+                  : 'bg-white/10 text-white/60'
+              } disabled:opacity-40`}
+            >
+              {previewByRole[role] ? 'ON' : 'OFF'}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 /** 밤 시작 전: 퀴즈 모드·학년·힌트·제한시간 + 출제 미리보기 (저장) */
 export function NightQuizConfigForm({

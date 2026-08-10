@@ -3,14 +3,14 @@
 import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
-  Camera,
   FileText,
   Newspaper,
   Radio,
   Search,
 } from 'lucide-react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
-import { playMorningEventSound } from '@/lib/game/audio';
+import { EventIllustration } from '@/components/play/EventIllustration';
+import { playReporterNewsSound } from '@/lib/game/audio';
 import { getCharacterStateForRole } from '@/lib/characterUtils';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import type { Role } from '@/types/game';
@@ -19,8 +19,6 @@ export function NewspaperArticleModal({
   targetName,
   role,
   targetAvatarId,
-  reporterName,
-  reporterAvatarId,
   onClose,
   onNext,
   hasNext = false,
@@ -32,8 +30,6 @@ export function NewspaperArticleModal({
   targetName: string;
   role?: Role | null;
   targetAvatarId?: string | null;
-  reporterName?: string | null;
-  reporterAvatarId?: string | null;
   onClose?: () => void;
   onNext?: () => void;
   hasNext?: boolean;
@@ -46,7 +42,7 @@ export function NewspaperArticleModal({
 
   useEffect(() => {
     if (!playSound) return;
-    void playMorningEventSound('REPORTER_NEWS').catch(() => {
+    void playReporterNewsSound().catch(() => {
       /* 자동 재생이 차단되어도 신문 연출은 계속한다. */
     });
   }, [playSound]);
@@ -83,8 +79,8 @@ export function NewspaperArticleModal({
             <Radio className="h-5 w-5 animate-pulse" />
             X-마피아 신문 특보
           </p>
-          <span className="rounded-sm border border-[#f8d889]/70 px-2 py-1 text-[9px] font-black uppercase tracking-[0.24em] text-[#f8d889] sm:text-xs">
-            Extra Edition
+          <span className="rounded-sm border border-[#f8d889]/70 px-2 py-1 text-[9px] font-black tracking-[0.24em] text-[#f8d889] sm:text-xs">
+            특별판
           </span>
         </div>
       </header>
@@ -94,28 +90,25 @@ export function NewspaperArticleModal({
           <div className="flex items-center justify-between border-b border-[#6f211b]/50 pb-2 text-[9px] font-black uppercase tracking-[0.2em] text-[#6f211b] sm:text-xs">
             <span className="inline-flex items-center gap-1.5">
               <Newspaper className="h-3.5 w-3.5" />
-              Morning Gazette
+              아침 신문
             </span>
             <span>긴급 발행 · 전원 공개</span>
           </div>
           <div className="mt-4 flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-[#8d2b20] sm:text-sm">
             <Search className="h-4 w-4" />
-            Reporter&apos;s Exclusive
+            기자 단독 취재
             <FileText className="h-4 w-4" />
           </div>
 
           <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4">
             <div className="relative rounded-xl border-2 border-[#b79a68] bg-[#d7bd8c] p-2 text-center shadow-lg shadow-black/20">
-              <CharacterAvatar
-                avatarId={reporterAvatarId ?? 'M0'}
-                isAlive
-                state="reporter"
+              <EventIllustration
+                kind="anonymous_reporter"
                 size={displayMode ? 170 : 82}
                 className="mx-auto"
               />
-              <Camera className="absolute right-2 top-2 h-4 w-4 text-[#6f211b]" />
               <p className="mt-2 truncate text-[9px] font-black tracking-[0.12em] text-[#6f211b] sm:text-xs">
-                {reporterName ?? '기자단'}
+                X-마피아 신문사 · 익명 취재
               </p>
             </div>
             <div className="relative rounded-xl border-2 border-[#b79a68] bg-[#d7bd8c] p-2 text-center shadow-lg shadow-black/20">
