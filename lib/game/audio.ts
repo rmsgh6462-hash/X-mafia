@@ -1,4 +1,4 @@
-import type { GameState, MorningEvent } from '@/types/game';
+import type { GameState, MorningEvent, Role } from '@/types/game';
 import { playGunshotSound } from '@/lib/utils/sound';
 
 type BgmBed = 'day' | 'night';
@@ -14,6 +14,7 @@ const STATE_TO_BED: Partial<Record<GameState, BgmBed>> = {
   DAY_MATCH: 'day',
   DAY_MISSION: 'day',
   DAY_VOTE: 'day',
+  VOTE_RESULT: 'day',
   RESULT: 'day',
   NIGHT: 'night',
   ENDED: 'day',
@@ -25,6 +26,7 @@ const TTS_SCRIPTS: Partial<Record<GameState, string>> = {
   DAY_MATCH: '일대일 매칭이 시작되었습니다. 삼십 초 동안 휴대폰 채팅으로 파트너와 대화하세요.',
   DAY_MISSION: '미션은 밤 세션의 퀴즈로 진행됩니다.',
   DAY_VOTE: '투표를 시작합니다. 십오 초 안에 의심되는 사람에게 투표해 주세요.',
+  VOTE_RESULT: '투표 결과를 발표합니다. 결과를 확인한 뒤 밤으로 이동합니다.',
   NIGHT: '밤이 되었습니다. 퀴즈를 풀고, 특수 직업은 능력도 사용해 주세요.',
   RESULT: '결과가 발표됩니다.',
   ENDED: '게임이 종료되었습니다.',
@@ -305,6 +307,42 @@ export async function playMorningEventSound(
     });
   } catch {
     // 자동 재생이 차단된 브라우저에서는 시각 효과만 표시한다.
+  }
+}
+
+/** 학생 역할 공개 카드가 뒤집히는 순간의 역할별 짧은 팡파르. */
+export async function playRoleRevealSound(role: Role): Promise<void> {
+  if (typeof window === 'undefined' || bgmForcedOff) return;
+
+  const notesByRole: Record<Role, number[]> = {
+    MAFIA: [196, 147, 98, 73],
+    DOCTOR: [392, 523, 659, 784],
+    POLICE: [330, 494, 659, 988],
+    REPORTER: [523, 659, 784, 1046],
+    SPIRITUALIST: [220, 330, 440, 660],
+    CITIZEN: [330, 392, 523, 659],
+  };
+
+  try {
+    const ctx = await resumeCtx();
+    const now = ctx.currentTime;
+    notesByRole[role].forEach((frequency, index) => {
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const offset = index * 0.075;
+      const duration = 0.23;
+      oscillator.type = role === 'MAFIA' ? 'sawtooth' : 'triangle';
+      oscillator.frequency.setValueAtTime(frequency, now + offset);
+      gain.gain.setValueAtTime(0.0001, now + offset);
+      gain.gain.exponentialRampToValueAtTime(0.07, now + offset + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + duration);
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start(now + offset);
+      oscillator.stop(now + offset + duration + 0.02);
+    });
+  } catch {
+    // 브라우저 자동 재생이 차단되어도 카드 뒤집기 연출은 계속한다.
   }
 }
 

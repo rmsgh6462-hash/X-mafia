@@ -69,18 +69,22 @@ import {
   assignMafiaMission,
   assignRolesByCounts,
   assignRolesByCountsAndStart,
+  assignRolesFixedThenRandom,
   assignRolesManual,
   createEmptyRoom,
   deleteRoom,
   dismissDayVoteResult,
+  enterNightAfterVoteResult,
   endGameRoom,
   extendVoteTime,
-  finalizeNightQuiz,
   generatePin,
+  grantDiscussionTime,
+  NIGHT_ACTIVITY_CLOSE_NOTICE,
   playerList,
   removePlayerFromRoom,
-  renamePlayerInRoom,
-  resolveDayVoteAndEnterNight,
+  requestNicknameChangeInRoom,
+  resolveDayVote,
+  VOTE_RESULT_DURATION_MS,
   resolveMafiaMissionState,
   restartGameRoom,
   savePendingNightQuizConfig,
@@ -145,6 +149,7 @@ const STATE_LABELS: Record<GameState, string> = {
   DAY_MATCH: '낮 — 1:1 매칭',
   DAY_MISSION: '낮 — 미션',
   DAY_VOTE: '낮 — 투표',
+  VOTE_RESULT: '낮 — 투표 결과',
   NIGHT: '밤',
   RESULT: '결과',
   ENDED: '종료',
@@ -202,23 +207,36 @@ export default function HostPage() {
     return Math.max(0, Math.ceil((room.voteEndsAt - now) / 1000));
   }, [room?.voteEndsAt, now]);
 
+  const voteResultRemainSec = useMemo(() => {
+    const resolvedAt = room?.dayVoteResult?.resolvedAt;
+    if (room?.gameState !== 'VOTE_RESULT' || !resolvedAt) return 0;
+    return Math.max(
+      0,
+      Math.ceil((resolvedAt + VOTE_RESULT_DURATION_MS - now) / 1000),
+    );
+  }, [room?.dayVoteResult?.resolvedAt, room?.gameState, now]);
+
   const voteTallies = useMemo(() => (room ? tallyVotes(room) : {}), [room]);
   const totalVotes = useMemo(
     () => Object.values(voteTallies).reduce((a, b) => a + b, 0),
     [voteTallies],
   );
   const voteAutoEndedRef = useRef<number | null>(null);
+  const voteResultAutoEndedRef = useRef<number | null>(null);
+  const talkAutoEndedRef = useRef<number | null>(null);
 
   // 클라이언트 join URL
   useEffect(() => {
     setJoinUrl(window.location.origin);
   }, []);
 
-  // 매칭·투표·밤퀴즈 타이머 틱
+  // 매칭·투표·토론·밤퀴즈 타이머 틱
   useEffect(() => {
     const needTick =
       (room?.gameState === 'DAY_MATCH' && room.matchEndsAt) ||
       (room?.gameState === 'DAY_VOTE' && room.voteEndsAt) ||
+      (room?.gameState === 'VOTE_RESULT' && room.dayVoteResult?.resolvedAt) ||
+      (room?.gameState === 'DAY_TALK' && room.talkEndsAt) ||
       (room?.gameState === 'NIGHT' &&
         room.nightQuizState?.active &&
         room.nightQuizState.outcome === 'PENDING');
@@ -229,6 +247,8 @@ export default function HostPage() {
     room?.gameState,
     room?.matchEndsAt,
     room?.voteEndsAt,
+    room?.dayVoteResult?.resolvedAt,
+    room?.talkEndsAt,
     room?.nightQuizState?.active,
     room?.nightQuizState?.outcome,
     room?.nightQuizState?.endsAt,
@@ -274,7 +294,12 @@ export default function HostPage() {
                 mergedPlayers[p.id] = { ...remotePlayer, role: p.role };
               }
             });
-            const merged = { ...remote, players: mergedPlayers };
+            const merged = {
+              ...remote,
+              players: mergedPlayers,
+              pendingRoleAssignments:
+                local.pendingRoleAssignments ?? remote.pendingRoleAssignments,
+            };
             roomStateRef.current = merged;
             setRoom(merged);
             return;
@@ -344,9 +369,38 @@ export default function HostPage() {
     if (voteAutoEndedRef.current === room.voteEndsAt) return;
     voteAutoEndedRef.current = room.voteEndsAt;
     void (async () => {
-      const next = resolveDayVoteAndEnterNight(room);
+      const next = resolveDayVote(room);
       await commitRoom(next);
       speakAfterVoteResolve(room, next);
+    })();
+  }, [room, now, commitRoom]);
+
+  // 투표 결과 발표가 끝나면 자동으로 밤으로 이동한다. 교사는 그 전에 직접 이동할 수 있다.
+  useEffect(() => {
+    if (!room || room.gameState !== 'VOTE_RESULT') return;
+    const resolvedAt = room.dayVoteResult?.resolvedAt;
+    if (!resolvedAt || now < resolvedAt + VOTE_RESULT_DURATION_MS) return;
+    if (voteResultAutoEndedRef.current === resolvedAt) return;
+    voteResultAutoEndedRef.current = resolvedAt;
+    void runAction((current) => {
+      const next = enterNightAfterVoteResult(current);
+      if (next.gameState === 'NIGHT') {
+        speak('밤이 되었습니다. 퀴즈와 직업 활동을 시작합니다.');
+      }
+      return next;
+    });
+  }, [room, now, commitRoom]);
+
+  // 토론 시간 만료 → 자동 투표
+  useEffect(() => {
+    if (!room || room.gameState !== 'DAY_TALK' || !room.talkEndsAt) return;
+    if (Date.now() < room.talkEndsAt) return;
+    if (talkAutoEndedRef.current === room.talkEndsAt) return;
+    talkAutoEndedRef.current = room.talkEndsAt;
+    void (async () => {
+      const next = startVotePhase(room);
+      await commitRoom(next);
+      speak('토론 시간이 끝났습니다. 투표를 시작합니다.');
     })();
   }, [room, now, commitRoom]);
 
@@ -425,6 +479,16 @@ export default function HostPage() {
       () => undefined,
     );
     return queued;
+  };
+
+  const handleEnterNightAfterVoteResult = () => {
+    void runAction((current) => {
+      const next = enterNightAfterVoteResult(current);
+      if (next.gameState === 'NIGHT') {
+        speak('밤이 되었습니다. 퀴즈와 직업 활동을 시작합니다.');
+      }
+      return next;
+    });
   };
 
   const handleAnonymousTip = async (hint: string) => {
@@ -667,7 +731,20 @@ export default function HostPage() {
         </header>
 
         {/* 메인 스테이지 */}
-        <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 pb-44 pt-4 md:px-12">
+        <main
+          className={`relative z-10 flex flex-1 flex-col items-center justify-center px-6 pb-44 pt-4 md:px-12 ${
+            room && room.gameState !== 'WAITING'
+              ? 'md:pl-[22rem] md:pr-[24rem]'
+              : ''
+          }`}
+        >
+          {room && room.gameState !== 'WAITING' && (
+            <aside className="absolute left-3 top-0 z-20 flex max-h-[calc(100vh-11rem)] w-[min(100%,20rem)] flex-col gap-3 overflow-y-auto md:left-8 lg:w-80">
+              <MafiaChatMonitor room={room} />
+              <GhostChatMonitor room={room} />
+            </aside>
+          )}
+
           {room && room.gameState !== 'WAITING' && (
             <div className="absolute right-4 top-0 z-20 md:right-10">
               <GmPanel
@@ -708,6 +785,10 @@ export default function HostPage() {
                       ? '마피아 비밀 채팅을 켭니다.'
                       : '마피아 비밀 채팅을 끕니다.',
                   );
+                }}
+                onGrantDiscussionTime={(durationSec) => {
+                  void runAction((r) => grantDiscussionTime(r, durationSec));
+                  speak(`토론 시간 ${durationSec}초를 부여합니다.`);
                 }}
               />
             </div>
@@ -772,15 +853,19 @@ export default function HostPage() {
                       void runAction((r) => removePlayerFromRoom(r, playerId));
                       speak('학생을 퇴장시켰습니다.');
                     }}
-                    onRename={(playerId, name) => {
+                    onRequestNicknameChange={(playerId) => {
                       const current = roomStateRef.current;
                       if (!current) return '방 정보가 없습니다.';
-                      const preview = renamePlayerInRoom(current, playerId, name);
+                      const preview = requestNicknameChangeInRoom(
+                        current,
+                        playerId,
+                      );
                       if (preview.error) return preview.error;
                       void runAction((r) => {
-                        const result = renamePlayerInRoom(r, playerId, name);
+                        const result = requestNicknameChangeInRoom(r, playerId);
                         return result.error ? r : result.room;
                       });
+                      speak('닉네임 재설정을 요청했습니다.');
                       return null;
                     }}
                   />
@@ -805,16 +890,33 @@ export default function HostPage() {
                         speak('직업을 랜덤 배정했습니다.');
                       }
                     }}
-                    onManualAssign={(assignments) => {
-                      void runAction((r) => assignRolesManual(r, assignments));
-                      speak('수동 직업 배정을 저장했습니다.');
+                    onManualAssign={(assignments, counts, fillRandom) => {
+                      if (fillRandom) {
+                        void runAction((r) =>
+                          assignRolesFixedThenRandom(
+                            setMaxRounds(r, r.maxRounds),
+                            assignments,
+                            counts,
+                          ),
+                        );
+                        speak('수동 지정과 남은 직업을 랜덤 배정했습니다.');
+                      } else {
+                        void runAction((r) =>
+                          assignRolesManual(r, assignments),
+                        );
+                        speak('수동 직업 배정을 저장했습니다.');
+                      }
                     }}
-                    onStart={(rounds, assignments) => {
+                    onStart={(rounds, assignments, counts) => {
                       void runAction((r) => {
-                        const withRoles = assignments
-                          ? assignRolesManual(r, assignments)
-                          : r;
-                        return startAssignedGame(setMaxRounds(withRoles, rounds));
+                        const withRoles = assignRolesFixedThenRandom(
+                          r,
+                          assignments,
+                          counts,
+                        );
+                        return startAssignedGame(
+                          setMaxRounds(withRoles, rounds),
+                        );
                       }, 4);
                       speak('직업을 배정하고 게임을 시작합니다.');
                     }}
@@ -893,7 +995,7 @@ export default function HostPage() {
                     disabled={busy}
                     onClick={() => {
                       void runAction((r) => {
-                        const next = resolveDayVoteAndEnterNight(r);
+                        const next = resolveDayVote(r);
                         speakAfterVoteResolve(r, next);
                         return next;
                       });
@@ -904,6 +1006,29 @@ export default function HostPage() {
                     투표 종료
                   </button>
                 </div>
+              </StagePanel>
+            ) : room.gameState === 'VOTE_RESULT' ? (
+              <StagePanel key="vote-result" title="투표 결과 발표">
+                <div className="mx-auto max-w-2xl rounded-2xl bg-red-950/45 p-6 text-center ring-1 ring-red-300/25">
+                  <p className="text-xs font-black uppercase tracking-[0.24em] text-amber-200/80">
+                    Vote Result · Display 진행 중
+                  </p>
+                  <p className="mt-4 text-2xl font-black text-white md:text-4xl">
+                    {room.dayVoteResult?.announcement ?? '이번 투표에서 탈락자는 없습니다.'}
+                  </p>
+                  <p className="mt-4 text-sm font-bold text-white/60">
+                    서브모니터에 체포 연출을 공개한 뒤 밤으로 이동합니다. 자동 전환까지 {voteResultRemainSec}초
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={handleEnterNightAfterVoteResult}
+                  className="mt-8 inline-flex items-center gap-2 rounded-xl bg-indigo-500 px-6 py-3 text-base font-black text-white shadow-lg shadow-indigo-950/40 hover:bg-indigo-400 disabled:opacity-50"
+                >
+                  <Moon className="h-5 w-5" />
+                  밤으로 이동
+                </button>
               </StagePanel>
             ) : room.gameState === 'NIGHT' ? (
               <StagePanel key="night" title="밤 — 퀴즈 · 직업 활동">
@@ -955,23 +1080,26 @@ export default function HostPage() {
                     room={room}
                     busy={busy}
                     now={now}
-                    onFinalize={() => {
-                      void runAction(finalizeNightQuiz);
-                      speak('밤 퀴즈를 판정합니다.');
-                    }}
                   />
                 </div>
 
                 <NightActivityBoard room={room} />
 
+                <p className="mx-auto mt-6 max-w-3xl text-center text-sm font-semibold text-indigo-100/85">
+                  {NIGHT_ACTIVITY_CLOSE_NOTICE}
+                </p>
+
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => void handleResolveNight()}
-                  className="mt-8 inline-flex items-center gap-2 rounded-xl bg-amber-400 px-6 py-3 text-base font-black text-stone-900 hover:bg-amber-300 disabled:opacity-50"
+                  onClick={() => {
+                    void handleResolveNight();
+                    speak('퀴즈와 직업별 밤 활동을 강제 마감합니다.');
+                  }}
+                  className="mt-4 inline-flex items-center gap-2 rounded-xl bg-amber-400 px-6 py-3 text-base font-black text-stone-900 hover:bg-amber-300 disabled:opacity-50"
                 >
                   <Sunrise className="h-5 w-5" />
-                  아침 발표 (퀴즈·밤 결과)
+                  퀴즈·직업 활동 강제 마감
                 </button>
               </StagePanel>
             ) : room.gameState === 'RESULT' ? (
@@ -1033,11 +1161,6 @@ export default function HostPage() {
             )}
           </AnimatePresence>
 
-          {/* 마피아 비밀 채팅 — 교사 필수 열람 */}
-          {room && room.gameState !== 'WAITING' && (
-            <MafiaChatMonitor room={room} />
-          )}
-
           {/* 매칭 채팅: 실시간 + 종료 후에도 교사 확인 */}
           {room &&
             (room.gameState === 'DAY_MATCH' ||
@@ -1048,11 +1171,6 @@ export default function HostPage() {
                 live={room.gameState === 'DAY_MATCH'}
               />
             )}
-
-          {/* 유령 채팅 실시간 모니터링 */}
-          {room && room.gameState !== 'WAITING' && (
-            <GhostChatMonitor room={room} />
-          )}
 
           {error && (
             <p className="mt-6 max-w-xl rounded-lg bg-red-950/70 px-4 py-2 text-center text-sm text-red-100">
@@ -1073,34 +1191,6 @@ export default function HostPage() {
                     ? ' · 멀티킬'
                     : ''}
               </p>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => void toggleNarration()}
-                  aria-pressed={narrationOn}
-                  className={`inline-flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-bold transition ${
-                    narrationOn
-                      ? 'bg-emerald-500/80 text-white hover:bg-emerald-400'
-                      : 'bg-white/10 text-white/80 hover:bg-white/16'
-                  }`}
-                >
-                  {narrationOn ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
-                  나레이션
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void toggleBgm()}
-                  aria-pressed={bgmOn}
-                  className={`inline-flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-bold transition ${
-                    bgmOn
-                      ? 'bg-amber-500/90 text-stone-900 hover:bg-amber-400'
-                      : 'bg-white/10 text-white/80 hover:bg-white/16'
-                  }`}
-                >
-                  {bgmOn ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
-                  배경음
-                </button>
-              </div>
             </div>
 
             <div className="flex flex-wrap items-center justify-center gap-2">
@@ -1115,8 +1205,15 @@ export default function HostPage() {
                       const assigned =
                         room &&
                         playerList(room).length >= 4 &&
-                        playerList(room).every((p) => p.role != null) &&
-                        playerList(room).some((p) => p.role === 'MAFIA');
+                        (() => {
+                          const pending = room.pendingRoleAssignments;
+                          const roleOf = (id: string) =>
+                            pending?.[id] ?? room.players?.[id]?.role ?? null;
+                          return (
+                            playerList(room).every((p) => roleOf(p.id) != null) &&
+                            playerList(room).some((p) => roleOf(p.id) === 'MAFIA')
+                          );
+                        })();
                       speak(
                         assigned
                           ? '저장한 직업으로 게임을 시작합니다.'
@@ -1195,6 +1292,7 @@ export default function HostPage() {
                       ...r,
                       gameState: 'DAY_TALK',
                       matchEndsAt: null,
+                      talkEndsAt: null,
                     }))
                   }
                 />
@@ -1225,7 +1323,7 @@ export default function HostPage() {
                     disabled={busy}
                     onClick={() => {
                       void runAction((r) => {
-                        const next = resolveDayVoteAndEnterNight(r);
+                        const next = resolveDayVote(r);
                         speakAfterVoteResolve(r, next);
                         return next;
                       });
@@ -1235,12 +1333,25 @@ export default function HostPage() {
                 </>
               )}
 
+              {room?.gameState === 'VOTE_RESULT' && (
+                <ControlBtn
+                  icon={<Moon className="h-4 w-4" />}
+                  label={`밤으로 이동${voteResultRemainSec > 0 ? ` · ${voteResultRemainSec}초` : ''}`}
+                  disabled={busy}
+                  onClick={handleEnterNightAfterVoteResult}
+                  accent="night"
+                />
+              )}
+
               {room?.gameState === 'NIGHT' && (
                 <ControlBtn
                   icon={<Sunrise className="h-4 w-4" />}
-                  label="아침 발표"
+                  label="강제 마감"
                   disabled={busy}
-                  onClick={() => void handleResolveNight()}
+                  onClick={() => {
+                    void handleResolveNight();
+                    speak('퀴즈와 직업별 밤 활동을 강제 마감합니다.');
+                  }}
                   accent="amber"
                 />
               )}
@@ -1909,7 +2020,7 @@ function PartnerGrid({ room }: { room: GameRoom }) {
 function PlayerChips({ room }: { room: GameRoom }) {
   return (
     <div className="mt-6">
-      <PlayerRoster room={room} compact title="플레이어" />
+      <PlayerRoster room={room} compact title="플레이어" showRoles />
     </div>
   );
 }

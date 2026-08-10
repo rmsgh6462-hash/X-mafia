@@ -3,7 +3,7 @@
 import { Eye, EyeOff, X } from 'lucide-react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { ROLE_ACCENTS, ROLE_LABELS } from '@/lib/game/roles';
-import { playerList } from '@/lib/game/room';
+import { playerList, resolvedRoleForPlayer } from '@/lib/game/room';
 import type { GameRoom, Role } from '@/types/game';
 
 const ROLE_ORDER: Role[] = [
@@ -29,11 +29,12 @@ export function RoleBoardPanel({
   const players = playerList(room).sort((a, b) =>
     a.name.localeCompare(b.name, 'ko'),
   );
+  const roleOf = (id: string) => resolvedRoleForPlayer(room, id);
   const byRole = ROLE_ORDER.map((role) => ({
     role,
-    list: players.filter((p) => p.role === role),
+    list: players.filter((p) => roleOf(p.id) === role),
   })).filter((g) => g.list.length > 0);
-  const unassigned = players.filter((p) => !p.role);
+  const unassigned = players.filter((p) => !roleOf(p.id));
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-3 backdrop-blur-sm md:items-center">
@@ -49,6 +50,9 @@ export function RoleBoardPanel({
             </h2>
             <p className="text-xs text-white/45">
               대형 화면에 오래 두지 마세요 · 학생에게 보이지 않게 주의
+              {room.gameState === 'WAITING' && room.pendingRoleAssignments
+                ? ' · 시작 전 미리보기(학생 비공개)'
+                : ''}
             </p>
           </div>
           <button
@@ -62,9 +66,9 @@ export function RoleBoardPanel({
         </div>
 
         <div className="max-h-[calc(88vh-4rem)] space-y-4 overflow-y-auto p-4">
-          {players.every((p) => !p.role) ? (
+          {players.every((p) => !roleOf(p.id)) ? (
             <p className="py-8 text-center text-sm text-white/50">
-              아직 역할이 배정되지 않았습니다. 게임 시작 후 확인할 수 있습니다.
+              아직 역할이 배정되지 않았습니다. 직업 배정 후 확인할 수 있습니다.
             </p>
           ) : (
             <>
@@ -89,6 +93,10 @@ export function RoleBoardPanel({
                           isAlive={p.isAlive}
                           size={40}
                           previewOnHover
+                          role={roleOf(p.id)}
+                          viewerRole="TEACHER"
+                          targetPlayerId={p.id}
+                          viewerPlayerId={null}
                         />
                         <div className="min-w-0">
                           <p

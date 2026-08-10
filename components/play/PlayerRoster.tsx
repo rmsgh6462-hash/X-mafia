@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
+import type { CharacterViewerRole } from '@/lib/characterUtils';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import { playerList } from '@/lib/game/room';
 import { visibleRoleBadgeFor } from '@/lib/game/visibility';
@@ -16,6 +17,7 @@ export function PlayerRoster({
   showRoles = false,
   /** 학생 본인 — 있으면 마피아 동료만 배지 표시 (교사 showRoles와 별개) */
   viewer = null,
+  viewerRole,
   /** 접기/펼치기 (접어도 인원 수는 표시) */
   collapsible = false,
   defaultCollapsed = false,
@@ -27,6 +29,8 @@ export function PlayerRoster({
   /** 교사 화면용 — 배정된 직업 전부 표시 */
   showRoles?: boolean;
   viewer?: Player | null;
+  /** 교사 또는 학생 뷰어 역할. 생략하면 viewer.role을 사용한다. */
+  viewerRole?: CharacterViewerRole | null;
   collapsible?: boolean;
   defaultCollapsed?: boolean;
 }) {
@@ -34,6 +38,11 @@ export function PlayerRoster({
   const aliveCount = list.filter((p) => p.isAlive).length;
   const [expanded, setExpanded] = useState(!defaultCollapsed);
   const showList = !collapsible || expanded;
+  const imageViewerRole = showRoles
+    ? 'TEACHER'
+    : viewerRole !== undefined
+      ? viewerRole
+      : viewer?.role ?? null;
 
   const countLabel =
     room.gameState === 'WAITING'
@@ -91,11 +100,14 @@ export function PlayerRoster({
               }`}
             >
               {list.map((p) => {
-                const badge = showRoles
-                  ? p.role
-                    ? ROLE_LABELS[p.role]
-                    : null
-                  : visibleRoleBadgeFor(viewer, p);
+                const waiting = room.gameState === 'WAITING';
+                const badge = waiting
+                  ? null
+                  : showRoles
+                    ? p.role
+                      ? ROLE_LABELS[p.role]
+                      : null
+                    : visibleRoleBadgeFor(viewer, p, room.gameState);
                 return (
                   <PlayerChip
                     key={p.id}
@@ -103,7 +115,10 @@ export function PlayerRoster({
                     highlight={p.id === highlightId}
                     compact={compact}
                     roleBadge={badge}
+                    viewerRole={imageViewerRole}
+                    viewerPlayerId={viewer?.id ?? null}
                     mafiaAlly={
+                      !waiting &&
                       !showRoles &&
                       viewer?.role === 'MAFIA' &&
                       p.role === 'MAFIA' &&
@@ -126,12 +141,16 @@ function PlayerChip({
   compact,
   roleBadge,
   mafiaAlly,
+  viewerRole,
+  viewerPlayerId,
 }: {
   player: Player;
   highlight?: boolean;
   compact?: boolean;
   roleBadge?: string | null;
   mafiaAlly?: boolean;
+  viewerRole?: CharacterViewerRole | null;
+  viewerPlayerId?: string | null;
 }) {
   return (
     <li
@@ -150,6 +169,10 @@ function PlayerChip({
         isAlive={player.isAlive}
         size={compact ? 44 : 56}
         previewOnHover
+        role={player.role}
+        viewerRole={viewerRole}
+        targetPlayerId={player.id}
+        viewerPlayerId={viewerPlayerId}
       />
       <span
         className={`mt-1 w-full truncate text-xs font-bold ${

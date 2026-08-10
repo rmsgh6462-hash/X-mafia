@@ -1,4 +1,4 @@
-﻿import {
+import {
   get,
   onValue,
   push,
@@ -33,6 +33,7 @@ import {
   ROLE_LABELS,
   type RoleCountConfig,
 } from '@/lib/game/roles';
+import { resolveAssignmentsWithRandomFill } from '@/lib/roleAssignment';
 import { evaluateGameEnd } from '@/lib/game/winConditions';
 import type {
   GameRoom,
@@ -42,6 +43,7 @@ import type {
   MatchChatMessage,
   MissionOutcome,
   MissionSubmission,
+  NicknameChangeRequest,
   NightQuizConfig,
   NightQuizState,
   Player,
@@ -73,6 +75,7 @@ export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
     votes: {},
     matchEndsAt: null,
     voteEndsAt: null,
+    talkEndsAt: null,
     voteTieResolution: 'RANDOM',
     revealDeathRoles: true,
     allowMafiaTargetMafia: true,
@@ -89,6 +92,8 @@ export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
     matchChats: {},
     matchChatHistory: {},
     ghostPredictions: {},
+    nicknameChangeRequest: null,
+    pendingRoleAssignments: null,
   };
 }
 
@@ -145,6 +150,7 @@ export function endGameRoom(room: GameRoom): GameRoom {
     victoryTeam: room.victoryTeam ?? room.winnerSide ?? null,
     matchEndsAt: null,
     voteEndsAt: null,
+    talkEndsAt: null,
   };
 }
 
@@ -321,6 +327,7 @@ export function normalizeGameRoom(room: GameRoom): GameRoom {
     votes: room.votes ?? {},
     matchEndsAt: room.matchEndsAt ?? null,
     voteEndsAt: room.voteEndsAt ?? null,
+    talkEndsAt: room.talkEndsAt ?? null,
     voteTieResolution: room.voteTieResolution ?? 'RANDOM',
     revealDeathRoles: room.revealDeathRoles !== false,
     allowMafiaTargetMafia: room.allowMafiaTargetMafia !== false,
@@ -336,6 +343,60 @@ export function normalizeGameRoom(room: GameRoom): GameRoom {
     matchChats: room.matchChats ?? {},
     matchChatHistory: room.matchChatHistory ?? {},
     ghostPredictions: room.ghostPredictions ?? {},
+    nicknameChangeRequest: normalizeNicknameChangeRequest(
+      room.nicknameChangeRequest,
+    ),
+    pendingRoleAssignments: normalizePendingRoleAssignments(
+      room.pendingRoleAssignments,
+    ),
+  };
+}
+
+function normalizePendingRoleAssignments(
+  raw: Record<string, Role | null> | null | undefined,
+): Record<string, Role | null> | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const out: Record<string, Role | null> = {};
+  let hasAny = false;
+  Object.entries(raw).forEach(([id, role]) => {
+    if (!id) return;
+    hasAny = true;
+    out[id] =
+      role === 'CITIZEN' ||
+      role === 'MAFIA' ||
+      role === 'DOCTOR' ||
+      role === 'POLICE' ||
+      role === 'REPORTER' ||
+      role === 'SPIRITUALIST'
+        ? role
+        : null;
+  });
+  return hasAny ? out : null;
+}
+
+/** 교사 화면용: 대기 중에는 pending, 시작 후에는 player.role */
+export function resolvedRoleForPlayer(
+  room: GameRoom,
+  playerId: string,
+): Role | null {
+  if (room.gameState === 'WAITING') {
+    const pending = room.pendingRoleAssignments?.[playerId];
+    if (pending !== undefined) return pending;
+  }
+  return room.players?.[playerId]?.role ?? null;
+}
+
+function normalizeNicknameChangeRequest(
+  raw: NicknameChangeRequest | null | undefined,
+): NicknameChangeRequest | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const playerId = String(raw.playerId ?? '').trim();
+  const previousName = String(raw.previousName ?? '').trim();
+  if (!playerId || !previousName) return null;
+  return {
+    playerId,
+    previousName,
+    requestedAt: Number(raw.requestedAt) || Date.now(),
   };
 }
 
@@ -356,33 +417,99 @@ export function removePlayerFromRoom(
   if (!room.players?.[playerId]) return room;
   const players = { ...room.players };
   delete players[playerId];
-  return { ...room, players };
+  const nicknameChangeRequest =
+    room.nicknameChangeRequest?.playerId === playerId
+      ? null
+      : room.nicknameChangeRequest ?? null;
+  return { ...room, players, nicknameChangeRequest };
+}
+
+/**
+ * 닉네임 재설정 검증.
+ * - 다른 학생과 중복 불가
+ * - 요청 직전(또는 forbiddenPrevious) 닉네임 재사용 불가
+ */
+export function validateNicknameChange(
+  room: GameRoom,
+  playerId: string,
+  nextName: string,
+  forbiddenPrevious?: string | null,
+): string | null {
+  if (room.gameState !== 'WAITING') {
+    return '게임이 시작된 뒤에는 닉네임을 바꿀 수 없습니다.';
+  }
+  const player = room.players?.[playerId];
+  if (!player) return '해당 학생을 찾을 수 없습니다.';
+  const trimmed = nextName.trim();
+  if (trimmed.length < 1 || trimmed.length > 12) {
+    return '닉네임은 1~12자로 입력해 주세요.';
+  }
+
+  const fromRequest =
+    room.nicknameChangeRequest?.playerId === playerId
+      ? room.nicknameChangeRequest.previousName.trim()
+      : '';
+  const blockedPrevious =
+    (forbiddenPrevious ?? '').trim() || fromRequest || player.name.trim();
+
+  if (blockedPrevious && trimmed === blockedPrevious) {
+    return '이전에 사용하던 닉네임은 다시 사용할 수 없습니다.';
+  }
+  const duplicate = playerList(room).some(
+    (p) => p.id !== playerId && p.name.trim() === trimmed,
+  );
+  if (duplicate) {
+    return '이미 다른 친구가 사용 중인 닉네임입니다.';
+  }
+  return null;
+}
+
+/** 교사: 특정 학생에게 닉네임 재설정 요청 발송 */
+export function requestNicknameChangeInRoom(
+  room: GameRoom,
+  playerId: string,
+): { room: GameRoom; error: string | null } {
+  if (room.gameState !== 'WAITING') {
+    return { room, error: '대기 중에만 닉네임 변경을 요청할 수 있습니다.' };
+  }
+  const player = room.players?.[playerId];
+  if (!player) return { room, error: '해당 학생을 찾을 수 없습니다.' };
+  return {
+    room: {
+      ...room,
+      nicknameChangeRequest: {
+        playerId,
+        previousName: player.name.trim(),
+        requestedAt: Date.now(),
+      },
+    },
+    error: null,
+  };
 }
 
 /**
  * 대기 화면: 닉네임 변경.
- * 빈 이름·길이 초과·다른 학생과 중복이면 변경하지 않는다.
+ * 빈 이름·길이 초과·다른 학생과 중복·직전 닉네임 재사용이면 변경하지 않는다.
  */
 export function renamePlayerInRoom(
   room: GameRoom,
   playerId: string,
   nextName: string,
+  options?: { forbiddenPrevious?: string | null; clearRequest?: boolean },
 ): { room: GameRoom; error: string | null } {
-  if (room.gameState !== 'WAITING') {
-    return { room, error: '게임이 시작된 뒤에는 닉네임을 바꿀 수 없습니다.' };
-  }
+  const error = validateNicknameChange(
+    room,
+    playerId,
+    nextName,
+    options?.forbiddenPrevious,
+  );
+  if (error) return { room, error };
   const player = room.players?.[playerId];
   if (!player) return { room, error: '해당 학생을 찾을 수 없습니다.' };
   const trimmed = nextName.trim();
-  if (trimmed.length < 1 || trimmed.length > 12) {
-    return { room, error: '닉네임은 1~12자로 입력해 주세요.' };
-  }
-  const duplicate = playerList(room).some(
-    (p) => p.id !== playerId && p.name === trimmed,
-  );
-  if (duplicate) {
-    return { room, error: '이미 같은 닉네임의 학생이 있습니다.' };
-  }
+  const clearRequest =
+    options?.clearRequest !== false &&
+    room.nicknameChangeRequest?.playerId === playerId;
   return {
     room: {
       ...room,
@@ -390,9 +517,49 @@ export function renamePlayerInRoom(
         ...room.players,
         [playerId]: { ...player, name: trimmed },
       },
+      nicknameChangeRequest: clearRequest ? null : room.nicknameChangeRequest,
     },
     error: null,
   };
+}
+
+/** 학생: 교사 요청에 따라 닉네임 재설정 (트랜잭션) */
+export async function submitNicknameChangeRequest(
+  pin: string,
+  playerId: string,
+  nextName: string,
+): Promise<void> {
+  const trimmedPin = pin.replace(/\s/g, '');
+  const db = getFirebaseDatabase();
+  const roomRef = ref(db, `rooms/${trimmedPin}`);
+  let fail: Error | null = null;
+
+  const result = await runTransaction(roomRef, (raw) => {
+    fail = null;
+    if (!raw || typeof raw !== 'object') {
+      fail = new Error('방이 없습니다.');
+      return;
+    }
+    const room = normalizeGameRoom(raw as GameRoom);
+    const request = room.nicknameChangeRequest;
+    if (!request || request.playerId !== playerId) {
+      fail = new Error('닉네임 변경 요청이 없거나 만료되었습니다.');
+      return;
+    }
+    const renamed = renamePlayerInRoom(room, playerId, nextName, {
+      forbiddenPrevious: request.previousName,
+      clearRequest: true,
+    });
+    if (renamed.error) {
+      fail = new Error(renamed.error);
+      return;
+    }
+    return toFirebaseJson(renamed.room);
+  });
+
+  if (!result.committed) {
+    throw fail ?? new Error('닉네임 변경에 실패했습니다. 다시 시도해 주세요.');
+  }
 }
 
 /** 직업 랜덤 배정 후 DAY_TALK로 전환 (기본 프리셋) */
@@ -400,52 +567,104 @@ export function assignRolesAndStart(room: GameRoom): GameRoom {
   return startGameWithRoles(room, buildRoleDeck(playerList(room).length));
 }
 
-/** 인원수 지정 랜덤 배정만 수행 (대기 유지 — 교사 확인용) */
+/** 인원수 지정 랜덤 배정만 수행 (대기 유지 — 교사 확인용, 학생 role 비공개) */
 export function assignRolesByCounts(
   room: GameRoom,
   counts: RoleCountConfig,
 ): GameRoom {
   const players = playerList(room);
   const deck = buildRoleDeckFromCounts(players.length, counts);
+  const pending: Record<string, Role | null> = {};
   const nextPlayers: Record<string, Player> = {};
   players.forEach((p, i) => {
+    pending[p.id] = deck[i] ?? 'CITIZEN';
     nextPlayers[p.id] = {
       ...p,
-      role: deck[i] ?? 'CITIZEN',
+      role: null,
       isAlive: true,
       nightTarget: null,
       partnerId: null,
       hasSelfHealed: false,
     };
   });
-  return { ...room, players: nextPlayers };
+  return {
+    ...room,
+    players: nextPlayers,
+    pendingRoleAssignments: pending,
+  };
 }
 
-/** 수동 직업 맵 적용 (대기 유지) */
+/** 수동 직업 맵을 pending 에만 저장 (대기 유지, 학생 화면 비공개) */
 export function assignRolesManual(
   room: GameRoom,
   assignments: Record<string, Role | null>,
 ): GameRoom {
+  const pending: Record<string, Role | null> = {
+    ...(room.pendingRoleAssignments ?? {}),
+  };
   const nextPlayers: Record<string, Player> = {};
   Object.values(room.players ?? {}).forEach((p) => {
-    const hasAssignment = Object.prototype.hasOwnProperty.call(assignments, p.id);
-    const nextRole = hasAssignment ? assignments[p.id] : p.role;
+    const hasAssignment = Object.prototype.hasOwnProperty.call(
+      assignments,
+      p.id,
+    );
+    if (hasAssignment) {
+      pending[p.id] = assignments[p.id] ?? null;
+    }
     nextPlayers[p.id] = {
       ...p,
-      role: nextRole ?? null,
+      role: null,
     };
   });
-  return { ...room, players: nextPlayers };
+  return {
+    ...room,
+    players: nextPlayers,
+    pendingRoleAssignments: pending,
+  };
 }
 
-/** 이미 배정된 직업으로 게임 시작 (미배정 있으면 시민 처리) */
-export function startAssignedGame(room: GameRoom): GameRoom {
+/**
+ * 교사 고정 배정 + 미배정 랜덤 → pending 에만 저장 (학생 role 비공개).
+ */
+export function assignRolesFixedThenRandom(
+  room: GameRoom,
+  fixedAssignments: Record<string, Role | null>,
+  counts: RoleCountConfig,
+): GameRoom {
   const players = playerList(room);
+  const resolved = resolveAssignmentsWithRandomFill(
+    players.map((p) => p.id),
+    fixedAssignments,
+    counts,
+  );
   const nextPlayers: Record<string, Player> = {};
   players.forEach((p) => {
     nextPlayers[p.id] = {
       ...p,
-      role: p.role ?? 'CITIZEN',
+      role: null,
+      isAlive: true,
+      nightTarget: null,
+      partnerId: null,
+      hasSelfHealed: false,
+    };
+  });
+  return {
+    ...room,
+    players: nextPlayers,
+    pendingRoleAssignments: resolved,
+  };
+}
+
+/** pending(또는 기존 role)을 실제 직업으로 공개하며 게임 시작 */
+export function startAssignedGame(room: GameRoom): GameRoom {
+  const players = playerList(room);
+  const pending = room.pendingRoleAssignments;
+  const nextPlayers: Record<string, Player> = {};
+  players.forEach((p) => {
+    const fromPending = pending?.[p.id];
+    nextPlayers[p.id] = {
+      ...p,
+      role: fromPending ?? p.role ?? 'CITIZEN',
       isAlive: true,
       nightTarget: null,
       partnerId: null,
@@ -462,10 +681,12 @@ export function startAssignedGame(room: GameRoom): GameRoom {
   return {
     ...room,
     players: nextPlayers,
+    pendingRoleAssignments: null,
     gameState: 'DAY_TALK',
     votes: {},
     matchEndsAt: null,
     voteEndsAt: null,
+    talkEndsAt: null,
     nightQuizState: null,
     pendingNightQuizConfig: room.pendingNightQuizConfig ?? null,
     mafiaMissionState: emptyMafiaMissionState(),
@@ -489,6 +710,7 @@ export function startAssignedGame(room: GameRoom): GameRoom {
     matchChats: {},
     matchChatHistory: {},
     ghostPredictions: {},
+    nicknameChangeRequest: null,
   };
 }
 
@@ -498,9 +720,12 @@ export function startAssignedGame(room: GameRoom): GameRoom {
  */
 export function startGamePreferringAssignedRoles(room: GameRoom): GameRoom {
   const players = playerList(room);
+  const pending = room.pendingRoleAssignments;
+  const roleOf = (id: string) =>
+    pending?.[id] ?? room.players?.[id]?.role ?? null;
   const allAssigned =
-    players.length > 0 && players.every((p) => p.role != null);
-  const hasMafia = players.some((p) => p.role === 'MAFIA');
+    players.length > 0 && players.every((p) => roleOf(p.id) != null);
+  const hasMafia = players.some((p) => roleOf(p.id) === 'MAFIA');
   if (allAssigned && hasMafia) {
     return startAssignedGame(room);
   }
@@ -530,10 +755,12 @@ function startGameWithRoles(room: GameRoom, deck: Role[]): GameRoom {
   return {
     ...room,
     players: nextPlayers,
+    pendingRoleAssignments: null,
     gameState: 'DAY_TALK',
     votes: {},
     matchEndsAt: null,
     voteEndsAt: null,
+    talkEndsAt: null,
     nightQuizState: null,
     pendingNightQuizConfig: room.pendingNightQuizConfig ?? null,
     mafiaMissionState: emptyMafiaMissionState(),
@@ -557,6 +784,7 @@ function startGameWithRoles(room: GameRoom, deck: Role[]): GameRoom {
     matchChats: {},
     matchChatHistory: {},
     ghostPredictions: {},
+    nicknameChangeRequest: null,
   };
 }
 
@@ -607,6 +835,7 @@ export function startMatchPhase(room: GameRoom): GameRoom {
     players: nextPlayers,
     gameState: 'DAY_MATCH',
     matchEndsAt: Date.now() + 30_000,
+    talkEndsAt: null,
     matchChats: {},
     matchChatHistory: history,
   };
@@ -869,6 +1098,34 @@ export async function submitMissionAnswer(
 
 export const VOTE_DURATION_MS = 15_000;
 export const VOTE_EXTEND_MS = 15_000;
+/** 투표 결과를 공개 화면에 보여 주는 시간. 교사가 먼저 넘길 수도 있다. */
+export const VOTE_RESULT_DURATION_MS = 8_000;
+
+/** 밤 퀴즈·직업 활동 동시 마감 안내 (교사·서브모니터·학생 공통) */
+export const NIGHT_ACTIVITY_CLOSE_NOTICE =
+  '퀴즈 시간이 끝나면 직업별 밤 활동도 함께 마감됩니다.';
+
+/**
+ * 낮 토론 시간 부여.
+ * 만료되면 호스트가 자동으로 투표 단계로 전환한다.
+ */
+export function grantDiscussionTime(
+  room: GameRoom,
+  durationSec: number,
+): GameRoom {
+  if (room.gameState !== 'DAY_TALK') return room;
+  const sec = Math.max(5, Math.min(600, Math.floor(durationSec) || 0));
+  if (sec < 5) return room;
+  return {
+    ...room,
+    talkEndsAt: Date.now() + sec * 1000,
+  };
+}
+
+export function clearDiscussionTimer(room: GameRoom): GameRoom {
+  if (!room.talkEndsAt) return room;
+  return { ...room, talkEndsAt: null };
+}
 
 export function startVotePhase(room: GameRoom): GameRoom {
   return {
@@ -876,6 +1133,7 @@ export function startVotePhase(room: GameRoom): GameRoom {
     gameState: 'DAY_VOTE',
     votes: {},
     matchEndsAt: null,
+    talkEndsAt: null,
     voteEndsAt: Date.now() + VOTE_DURATION_MS,
     voteRevoteCandidates: null,
     dayVoteResult: null,
@@ -1016,10 +1274,11 @@ export function resolveDayVote(room: GameRoom): GameRoom {
   let next: GameRoom = {
     ...room,
     players: nextPlayers,
-    gameState: 'DAY_TALK',
+    gameState: 'VOTE_RESULT',
     votes: {},
     voteEndsAt: null,
     matchEndsAt: null,
+    talkEndsAt: null,
     voteRevoteCandidates: null,
     dayVoteResult: {
       eliminatedPlayerId: eliminatedId,
@@ -1092,8 +1351,8 @@ export function buildAutoNightQuizConfig(room: GameRoom): NightQuizConfig {
 }
 
 /**
- * 낮 투표 종료 → (재투표/게임종료가 아니면) 곧바로 밤 시작.
- * 탈락 공지(dayVoteResult)는 학생 팝업용으로 밤에도 잠시 유지한다.
+ * 낮 투표 종료 → (재투표/게임종료가 아니면) 투표 결과 발표 단계로 이동.
+ * 밤 전환은 enterNightAfterVoteResult에서 별도로 수행한다.
  */
 export function resolveDayVoteAndEnterNight(
   room: GameRoom,
@@ -1104,15 +1363,16 @@ export function resolveDayVoteAndEnterNight(
     return afterVote;
   }
 
-  const voteResult = afterVote.dayVoteResult;
-  const night = startNightPhase(
-    afterVote,
-    quizConfig ?? resolveNightQuizConfig(afterVote),
-  );
-  return {
-    ...night,
-    dayVoteResult: voteResult,
-  };
+  return enterNightAfterVoteResult(afterVote, quizConfig);
+}
+
+/** 투표 결과 발표가 끝난 뒤에만 밤 세션으로 이동한다. */
+export function enterNightAfterVoteResult(
+  room: GameRoom,
+  quizConfig?: NightQuizConfig,
+): GameRoom {
+  if (room.gameState !== 'VOTE_RESULT') return room;
+  return startNightPhase(room, quizConfig ?? resolveNightQuizConfig(room));
 }
 
 export function dismissDayVoteResult(room: GameRoom): GameRoom {
@@ -1145,6 +1405,7 @@ export function startNightPhase(
     votes: {},
     matchEndsAt: null,
     voteEndsAt: null,
+    talkEndsAt: null,
     nightResults: null,
     dayVoteResult: null,
     nightQuizState: createNightQuizState(room, config),

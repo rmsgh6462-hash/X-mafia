@@ -35,50 +35,50 @@ export function MafiaChatMonitor({ room }: { room: GameRoom }) {
   if (room.gameState === 'WAITING') return null;
 
   return (
-    <section className="mt-4 w-full max-w-4xl rounded-2xl border border-red-400/35 bg-red-950/45 p-4 text-left shadow-xl backdrop-blur-md">
+    <section className="w-full rounded-2xl border border-red-400/35 bg-red-950/45 p-3 text-left shadow-xl backdrop-blur-md">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center justify-between gap-2"
       >
-        <h3 className="flex items-center gap-2 text-sm font-black text-red-100">
-          <Lock className="h-4 w-4" />
-          마피아 비밀 채팅 모니터링
-          <span className="rounded-md bg-red-500/35 px-2 py-0.5 text-[10px] font-bold text-red-50">
-            {messages.length}개 · 생존 마피아 {mafiaAlive}명
+        <h3 className="flex flex-wrap items-center gap-1.5 text-xs font-black text-red-100">
+          <Lock className="h-3.5 w-3.5 shrink-0" />
+          마피아 비밀 채팅
+          <span className="rounded-md bg-red-500/35 px-1.5 py-0.5 text-[10px] font-bold text-red-50">
+            {messages.length} · 마피아 {mafiaAlive}
             {chatEnabled ? '' : ' · OFF'}
           </span>
         </h3>
-        <span className="text-xs font-bold text-red-200/70">
-          {open ? '접기' : '펼치기'} · 읽기 전용
+        <span className="shrink-0 text-[10px] font-bold text-red-200/70">
+          {open ? '접기' : '펼치기'}
         </span>
       </button>
 
       {open && (
-        <div className="mt-3 flex max-h-72 flex-col rounded-xl bg-black/40">
-          <p className="border-b border-white/10 px-3 py-2 text-[11px] text-red-100/65">
+        <div className="mt-2 flex max-h-44 flex-col rounded-xl bg-black/40 lg:max-h-52">
+          <p className="border-b border-white/10 px-2.5 py-1.5 text-[10px] leading-snug text-red-100/65">
             {chatEnabled
-              ? '생존 마피아끼리만 쓰는 비밀 채팅입니다. 시민·유령 화면에는 보이지 않지만, 교사에게는 항상 표시됩니다.'
-              : '현재 OFF — 학생은 채팅을 쓰거나 볼 수 없습니다. 아래에서 기존 대화를 계속 확인할 수 있습니다. (GM 패널에서 다시 켤 수 있습니다)'}
+              ? '생존 마피아 전용 · 읽기 전용'
+              : 'OFF — 학생 사용 불가 · 기록은 열람 가능'}
           </p>
-          <div className="flex-1 space-y-2 overflow-y-auto px-3 py-3">
+          <div className="flex-1 space-y-1.5 overflow-y-auto px-2.5 py-2">
             {messages.length === 0 ? (
-              <p className="py-6 text-center text-xs text-white/35">
+              <p className="py-4 text-center text-[11px] text-white/35">
                 아직 마피아 채팅이 없습니다.
               </p>
             ) : (
               messages.map((m) => (
                 <div
                   key={m.id}
-                  className="rounded-lg bg-red-500/10 px-2.5 py-1.5 ring-1 ring-red-400/20"
+                  className="rounded-lg bg-red-500/10 px-2 py-1.5 ring-1 ring-red-400/20"
                 >
                   <p className="text-[10px] font-semibold text-red-200/90">
                     {m.senderName}
-                    <span className="ml-2 font-normal text-white/35">
+                    <span className="ml-1.5 font-normal text-white/35">
                       {formatTime(m.timestamp)}
                     </span>
                   </p>
-                  <p className="text-sm text-white/90">{m.text}</p>
+                  <p className="text-xs text-white/90">{m.text}</p>
                 </div>
               ))
             )}

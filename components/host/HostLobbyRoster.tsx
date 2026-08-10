@@ -1,51 +1,26 @@
 'use client';
 
-import { useState } from 'react';
-import { Pencil, Trash2, Check, X } from 'lucide-react';
+import { Pencil, Trash2 } from 'lucide-react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { playerList } from '@/lib/game/room';
 import type { GameRoom } from '@/types/game';
 
-/** 대기 화면 — 교사: 학생 퇴장·닉네임 변경 */
+/** 대기 화면 — 교사: 그리드 카드 + 닉네임 재설정 요청·퇴장 */
 export function HostLobbyRoster({
   room,
   busy,
   onKick,
-  onRename,
+  onRequestNicknameChange,
 }: {
   room: GameRoom;
   busy?: boolean;
   onKick: (playerId: string) => void;
-  onRename: (playerId: string, name: string) => string | null;
+  onRequestNicknameChange: (playerId: string) => string | null;
 }) {
   const list = playerList(room).sort((a, b) =>
     a.name.localeCompare(b.name, 'ko'),
   );
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
-  const [localError, setLocalError] = useState<string | null>(null);
-
-  const beginEdit = (id: string, name: string) => {
-    setEditingId(id);
-    setDraft(name);
-    setLocalError(null);
-  };
-
-  const cancelEdit = () => {
-    setEditingId(null);
-    setDraft('');
-    setLocalError(null);
-  };
-
-  const commitEdit = () => {
-    if (!editingId) return;
-    const err = onRename(editingId, draft);
-    if (err) {
-      setLocalError(err);
-      return;
-    }
-    cancelEdit();
-  };
+  const pendingId = room.nicknameChangeRequest?.playerId ?? null;
 
   return (
     <section className="rounded-2xl bg-black/30 p-4 ring-1 ring-white/10">
@@ -61,95 +36,64 @@ export function HostLobbyRoster({
       {list.length === 0 ? (
         <p className="text-sm text-white/45">아직 입장한 학생이 없습니다.</p>
       ) : (
-        <ul className="max-h-80 space-y-2 overflow-y-auto">
+        <ul className="grid max-h-[28rem] grid-cols-3 gap-2 overflow-y-auto md:grid-cols-4 lg:grid-cols-5 md:gap-3">
           {list.map((p) => {
-            const editing = editingId === p.id;
+            const awaitingRename = pendingId === p.id;
             return (
               <li
                 key={p.id}
-                className="flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2.5 ring-1 ring-white/10"
+                className={`relative flex flex-col items-center gap-2 rounded-2xl bg-white/5 px-2 py-3 text-center ring-1 transition ${
+                  awaitingRename
+                    ? 'ring-amber-400/70 bg-amber-400/10'
+                    : 'ring-white/10'
+                }`}
               >
                 <CharacterAvatar
                   avatarId={p.avatarId}
-                  size={44}
+                  state="normal"
+                  size={56}
                   isAlive
                   previewOnHover
                 />
-                <div className="min-w-0 flex-1">
-                  {editing ? (
-                    <div className="flex flex-col gap-1.5">
-                      <input
-                        value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
-                        maxLength={12}
-                        autoFocus
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') commitEdit();
-                          if (e.key === 'Escape') cancelEdit();
-                        }}
-                        className="w-full rounded-lg border border-amber-400/50 bg-stone-950 px-2.5 py-1.5 text-sm font-bold text-white"
-                      />
-                      {localError && editing && (
-                        <p className="text-[11px] font-semibold text-red-300">
-                          {localError}
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="truncate text-sm font-bold text-white">
-                      {p.name}
-                    </p>
-                  )}
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  {editing ? (
-                    <>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={commitEdit}
-                        title="저장"
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/90 text-white hover:bg-emerald-400 disabled:opacity-40"
-                      >
-                        <Check className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={cancelEdit}
-                        title="취소"
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-white hover:bg-white/20 disabled:opacity-40"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => beginEdit(p.id, p.name)}
-                        title="닉네임 변경"
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-white hover:bg-sky-500/80 disabled:opacity-40"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => {
-                          const ok = window.confirm(
-                            `${p.name} 님을 방에서 퇴장시킬까요?`,
-                          );
-                          if (ok) onKick(p.id);
-                        }}
-                        title="퇴장"
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-white hover:bg-red-500/90 disabled:opacity-40"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </>
-                  )}
+                <p className="w-full truncate px-0.5 text-sm font-bold text-white">
+                  {p.name}
+                </p>
+                <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-emerald-300/95">
+                  <span
+                    className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.85)]"
+                    aria-hidden
+                  />
+                  {awaitingRename ? '변경 요청' : 'Waiting'}
+                </span>
+                <div className="mt-0.5 flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      const err = onRequestNicknameChange(p.id);
+                      if (err) window.alert(err);
+                    }}
+                    title="닉네임 수정 요청"
+                    aria-label={`${p.name} 닉네임 수정 요청`}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white hover:bg-sky-500/80 disabled:opacity-40"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      const ok = window.confirm(
+                        `${p.name} 님을 방에서 퇴장시킬까요?`,
+                      );
+                      if (ok) onKick(p.id);
+                    }}
+                    title="퇴장"
+                    aria-label={`${p.name} 퇴장`}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white hover:bg-red-500/90 disabled:opacity-40"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               </li>
             );
@@ -157,7 +101,7 @@ export function HostLobbyRoster({
         </ul>
       )}
       <p className="mt-3 text-[11px] text-white/40">
-        연필 아이콘으로 닉네임 변경, 휴지통으로 퇴장시킬 수 있습니다.
+        연필 아이콘으로 닉네임 재설정을 요청하고, 휴지통으로 퇴장시킬 수 있습니다.
       </p>
     </section>
   );

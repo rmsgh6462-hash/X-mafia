@@ -1,8 +1,12 @@
-﻿'use client';
+'use client';
 
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { ROLE_ACCENTS, ROLE_LABELS } from '@/lib/game/roles';
-import { alivePlayers, playerList } from '@/lib/game/room';
+import {
+  alivePlayers,
+  NIGHT_ACTIVITY_CLOSE_NOTICE,
+  playerList,
+} from '@/lib/game/room';
 import type { GameRoom, Player, Role } from '@/types/game';
 
 const NIGHT_ROLES: Role[] = [
@@ -79,6 +83,10 @@ export function NightActivityBoard({ room }: { room: GameRoom }) {
           {silenced ? ' · 정전(경찰·의사 무효)' : ''}
         </span>
       </div>
+
+      <p className="mb-3 rounded-xl bg-indigo-500/10 px-3 py-2 text-xs font-semibold leading-relaxed text-indigo-100/90 ring-1 ring-indigo-400/20">
+        {NIGHT_ACTIVITY_CLOSE_NOTICE}
+      </p>
 
       <div className="grid gap-3 md:grid-cols-2">
         {byRole.map(({ role, actors }) => (
@@ -186,6 +194,10 @@ function RoleActivityCard({
                 isAlive={actor.isAlive}
                 size={40}
                 previewOnHover
+                role={actor.role}
+                viewerRole="TEACHER"
+                targetPlayerId={actor.id}
+                viewerPlayerId={null}
               />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-bold text-white">

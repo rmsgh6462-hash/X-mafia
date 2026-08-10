@@ -1,7 +1,20 @@
 'use client';
 
 import { useState } from 'react';
-import { Bolt, Crosshair, Eye, EyeOff, Ghost, Lock, MessageSquareWarning, Vote, ZapOff } from 'lucide-react';
+import {
+  Bolt,
+  ChevronDown,
+  ChevronUp,
+  Clock3,
+  Crosshair,
+  Eye,
+  EyeOff,
+  Ghost,
+  Lock,
+  MessageSquareWarning,
+  Vote,
+  ZapOff,
+} from 'lucide-react';
 import type { GameRoom, GmEvent, VoteTieResolution } from '@/types/game';
 
 export function GmPanel({
@@ -15,6 +28,7 @@ export function GmPanel({
   onRevealDeathRolesChange,
   onAllowMafiaTargetMafiaChange,
   onMafiaChatEnabledChange,
+  onGrantDiscussionTime,
 }: {
   room: GameRoom;
   disabled?: boolean;
@@ -26,25 +40,119 @@ export function GmPanel({
   onRevealDeathRolesChange: (enabled: boolean) => void;
   onAllowMafiaTargetMafiaChange: (enabled: boolean) => void;
   onMafiaChatEnabledChange: (enabled: boolean) => void;
+  onGrantDiscussionTime: (durationSec: number) => void;
 }) {
   const [hint, setHint] = useState('');
+  const [customSec, setCustomSec] = useState('90');
+  const [open, setOpen] = useState(true);
 
   const active = room.gmEvent;
   const tieMode = room.voteTieResolution ?? 'RANDOM';
   const revealRoles = room.revealDeathRoles !== false;
   const allowMafiaTargetMafia = room.allowMafiaTargetMafia !== false;
   const mafiaChatEnabled = room.mafiaChatEnabled !== false;
+  const talkActive = room.gameState === 'DAY_TALK' && Boolean(room.talkEndsAt);
+  const talkRemainSec =
+    talkActive && room.talkEndsAt
+      ? Math.max(0, Math.ceil((room.talkEndsAt - Date.now()) / 1000))
+      : 0;
+  const canGrantTalk = room.gameState === 'DAY_TALK' && !disabled;
+  const customValue = Math.floor(Number(customSec));
+  const customValid =
+    Number.isFinite(customValue) && customValue >= 5 && customValue <= 600;
 
   return (
     <aside className="w-full max-w-md rounded-2xl border border-amber-500/25 bg-stone-950/75 p-4 shadow-xl backdrop-blur-md">
-      <div className="mb-3 flex items-center justify-between gap-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="mb-0 flex w-full items-center justify-between gap-2 text-left"
+      >
         <h3 className="text-sm font-black tracking-wide text-amber-200">
           GM 특수 제어 패널
         </h3>
-        <GmBadge event={active} />
-      </div>
+        <span className="inline-flex items-center gap-1.5">
+          <GmBadge event={active} />
+          <span className="inline-flex items-center gap-0.5 rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-bold text-white/70">
+            {open ? (
+              <>
+                접기 <ChevronUp className="h-3.5 w-3.5" />
+              </>
+            ) : (
+              <>
+                펼치기 <ChevronDown className="h-3.5 w-3.5" />
+              </>
+            )}
+          </span>
+        </span>
+      </button>
 
-      <div className="space-y-3">
+      {!open && (
+        <p className="mt-2 text-[11px] text-white/45">
+          접힌 상태입니다. 펼치면 토론 시간·동률 처리·특수 이벤트를 제어할 수
+          있습니다.
+          {talkActive ? ` · 토론 타이머 ${talkRemainSec}초` : ''}
+        </p>
+      )}
+
+      {open && (
+      <div className="mt-3 space-y-3">
+        {/* 토론 시간 부여 */}
+        <div className="rounded-xl bg-white/5 p-3">
+          <p className="mb-2 flex items-center gap-1.5 text-xs font-bold text-white/70">
+            <Clock3 className="h-3.5 w-3.5 text-sky-300" />
+            토론 시간 부여
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              disabled={!canGrantTalk}
+              onClick={() => onGrantDiscussionTime(30)}
+              className="rounded-lg bg-sky-500/20 py-2.5 text-sm font-black text-sky-100 ring-1 ring-sky-400/30 transition hover:bg-sky-500/30 disabled:opacity-40"
+            >
+              30초
+            </button>
+            <button
+              type="button"
+              disabled={!canGrantTalk}
+              onClick={() => onGrantDiscussionTime(60)}
+              className="rounded-lg bg-sky-500/20 py-2.5 text-sm font-black text-sky-100 ring-1 ring-sky-400/30 transition hover:bg-sky-500/30 disabled:opacity-40"
+            >
+              60초
+            </button>
+          </div>
+          <div className="mt-2 flex gap-2">
+            <input
+              type="number"
+              min={5}
+              max={600}
+              inputMode="numeric"
+              value={customSec}
+              onChange={(e) => setCustomSec(e.target.value)}
+              disabled={!canGrantTalk}
+              placeholder="초"
+              aria-label="토론 시간 직접 입력(초)"
+              className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 font-mono text-sm text-white outline-none placeholder:text-white/30 focus:border-sky-400/50 disabled:opacity-40"
+            />
+            <button
+              type="button"
+              disabled={!canGrantTalk || !customValid}
+              onClick={() => onGrantDiscussionTime(customValue)}
+              className="shrink-0 rounded-lg bg-sky-400 px-3 py-2 text-xs font-black text-stone-900 disabled:opacity-40"
+            >
+              부여
+            </button>
+          </div>
+          <p className="mt-1.5 text-[10px] text-white/45">
+            {room.gameState !== 'DAY_TALK'
+              ? '낮 토론 단계에서만 사용할 수 있습니다. 시간이 끝나면 자동으로 투표로 넘어갑니다.'
+              : talkActive
+                ? `토론 타이머 진행 중 · 남은 ${talkRemainSec}초 (다시 부여하면 시간이 갱신됩니다)`
+                : '서브 모니터에 남은 시간이 표시되고, 종료 시 자동으로 투표로 전환됩니다. (5~600초)'}
+          </p>
+        </div>
+
         {/* 투표 동률 처리 */}
         <div className="rounded-xl bg-white/5 p-3">
           <p className="mb-2 flex items-center gap-1.5 text-xs font-bold text-white/70">
@@ -239,6 +347,7 @@ export function GmPanel({
           )}
         </button>
       </div>
+      )}
     </aside>
   );
 }

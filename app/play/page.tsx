@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
@@ -29,8 +29,10 @@ import {
   NightSessionPanel,
 } from '@/components/play/MissionPlayPanel';
 import { PlayerRoster } from '@/components/play/PlayerRoster';
+import { NicknameChangeModal } from '@/components/play/NicknameChangeModal';
 import { Popup } from '@/components/play/Popup';
 import { RoleCard } from '@/components/play/RoleCard';
+import { RoleRevealAnimation } from '@/components/play/RoleRevealAnimation';
 import { VoteResultModal } from '@/components/play/VoteResultModal';
 import {
   isAvatarId,
@@ -49,6 +51,8 @@ import {
   loadPlaySession,
   peekRoom,
   playerList,
+  savePlaySession,
+  submitNicknameChangeRequest,
   subscribeRoom,
   type PlaySession,
 } from '@/lib/game/room';
@@ -61,6 +65,7 @@ const STATE_LABELS: Record<GameState, string> = {
   DAY_MATCH: '낮 · 1:1 매칭',
   DAY_MISSION: '낮 · 미션',
   DAY_VOTE: '낮 · 투표',
+  VOTE_RESULT: '낮 · 투표 결과',
   NIGHT: '밤',
   RESULT: '결과',
   ENDED: '종료',
@@ -130,6 +135,8 @@ function PlayPageInner() {
   const [policeOpen, setPoliceOpen] = useState(false);
   const [voteDeathOpen, setVoteDeathOpen] = useState(false);
   const [morningResultOpen, setMorningResultOpen] = useState(false);
+  const [roleRevealOpen, setRoleRevealOpen] = useState(false);
+  const [roleRevealComplete, setRoleRevealComplete] = useState(false);
   const [alertOpen, setAlertOpen] = useState(false);
   const [alertTitle, setAlertTitle] = useState('입장 실패');
   const [alertMessage, setAlertMessage] = useState('');
@@ -139,6 +146,7 @@ function PlayPageInner() {
   const seenPoliceRef = useRef<string | null>(null);
   const seenVoteDeathRef = useRef<number | null>(null);
   const seenMorningResultRef = useRef<string | null>(null);
+  const seenRoleRevealRef = useRef<string | null>(null);
   const joinGuardRef = useRef(false);
 
   const showAlert = (title: string, message: string) => {
@@ -183,9 +191,11 @@ function PlayPageInner() {
     if (!session) return;
     let unsub: (() => void) | undefined;
     let cancelled = false;
+    const pin = session.pin || session.roomId;
+    const playerId = session.playerId;
 
     try {
-      unsub = subscribeRoom(session.pin || session.roomId, (remote) => {
+      unsub = subscribeRoom(pin, (remote) => {
         if (cancelled) return;
         if (!remote) {
           if (!joinGuardRef.current) {
@@ -201,9 +211,18 @@ function PlayPageInner() {
         joinGuardRef.current = false;
 
         const players = remote.players ?? {};
-        if (!players[session.playerId]) {
+        const remoteMe = players[playerId];
+        if (!remoteMe) {
           // 구독 첫 스냅샷 레이스 대비: 잠시 후 재확인하지 않고 낙관적 me 유지
           return;
+        }
+        if (remoteMe.name) {
+          setSession((prev) => {
+            if (!prev || prev.name === remoteMe.name) return prev;
+            const next = { ...prev, name: remoteMe.name };
+            savePlaySession(next);
+            return next;
+          });
         }
       });
     } catch {
@@ -216,7 +235,7 @@ function PlayPageInner() {
       cancelled = true;
       unsub?.();
     };
-  }, [session]);
+  }, [session?.pin, session?.roomId, session?.playerId]);
 
   const me: Player | null = useMemo(() => {
     if (!session) return null;
@@ -348,6 +367,31 @@ function PlayPageInner() {
     morningEvents,
     morningActiveEvents,
   ]);
+
+  // 게임이 시작되어 역할이 처음 배정된 순간, 학생별 역할 공개 연출을 한 번만 보여 준다.
+  useEffect(() => {
+    if (!room || !me || room.gameState === 'WAITING' || !me.role) {
+      if (room?.gameState === 'WAITING') {
+        const resetTimer = window.setTimeout(() => {
+          seenRoleRevealRef.current = null;
+          setRoleRevealOpen(false);
+          setRoleRevealComplete(false);
+        }, 0);
+        return () => window.clearTimeout(resetTimer);
+      }
+      return;
+    }
+
+    const key = `${room.roomId}:${me.id}:${me.role}`;
+    if (seenRoleRevealRef.current === key) return;
+    seenRoleRevealRef.current = key;
+
+    const revealTimer = window.setTimeout(() => {
+      setRoleRevealComplete(false);
+      setRoleRevealOpen(true);
+    }, 250);
+    return () => window.clearTimeout(revealTimer);
+  }, [room?.gameState, room?.roomId, me?.id, me?.role]);
 
   const handleJoin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -591,8 +635,13 @@ function PlayPageInner() {
           <CharacterAvatar
             avatarId={me.avatarId}
             isAlive={me.isAlive}
+            state={me.isAlive ? null : 'dead'}
             size={48}
             previewOnHover
+            role={me.role}
+            viewerRole={me.role}
+            targetPlayerId={me.id}
+            viewerPlayerId={me.id}
           />
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/45">
@@ -665,33 +714,19 @@ function PlayPageInner() {
                   key="role"
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="flex w-full flex-col items-center gap-3 py-2"
+                  className="w-full py-2"
                 >
-                  <div className="flex w-full items-center gap-3 rounded-2xl bg-white/8 p-3 ring-1 ring-white/12">
-                    <CharacterAvatar
-                      avatarId={me.avatarId}
-                      isAlive={me.isAlive}
-                      size={62}
-                    />
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">
-                        나의 캐릭터 · 직업
-                      </p>
-                      <p className="mt-1 truncate text-base font-black text-white">
-                        {me.name}
-                      </p>
-                      <p className="mt-0.5 text-sm font-bold text-amber-200">
-                        {ROLE_LABELS[me.role]}
-                      </p>
-                    </div>
-                  </div>
                   <RoleCard
                     role={me.role}
                     avatarId={me.avatarId}
                     isAlive={me.isAlive}
+                    revealed={roleRevealComplete}
                     nightQuiz={room.nightQuizState}
                     mafiaMission={room.mafiaMissionState}
                     mafiaAllies={mafiaAllies}
+                    playerId={me.id}
+                    viewerRole={me.role}
+                    viewerPlayerId={me.id}
                   />
                 </motion.div>
               ) : (
@@ -780,6 +815,17 @@ function PlayPageInner() {
         )}
       </main>
 
+      <RoleRevealAnimation
+        open={roleRevealOpen && Boolean(me.role)}
+        role={me.role ?? 'CITIZEN'}
+        avatarId={me.avatarId}
+        playerName={me.name}
+        onClose={() => {
+          setRoleRevealComplete(true);
+          setRoleRevealOpen(false);
+        }}
+      />
+
       <Popup
         open={hintOpen}
         title="마피아 힌트 입수"
@@ -791,6 +837,21 @@ function PlayPageInner() {
           시민 미션 성공 보상입니다. 힌트를 팀과 공유하세요.
         </p>
       </Popup>
+
+      {room.nicknameChangeRequest?.playerId === me.id && (
+        <NicknameChangeModal
+          open={room.gameState === 'WAITING'}
+          room={room}
+          playerId={me.id}
+          request={room.nicknameChangeRequest}
+          onSubmit={async (nextName) => {
+            await submitNicknameChangeRequest(session.pin, me.id, nextName);
+            const nextSession = { ...session, name: nextName };
+            savePlaySession(nextSession);
+            setSession(nextSession);
+          }}
+        />
+      )}
 
       <Popup
         open={policeOpen && me.role === 'POLICE'}

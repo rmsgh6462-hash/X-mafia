@@ -12,6 +12,7 @@ import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { MorningReporterNews } from '@/components/play/MorningReporterNews';
 import { playerGenderFromAvatarId } from '@/lib/game/avatars';
 import { playMorningEventSound } from '@/lib/game/audio';
+import { getCharacterStateForRole } from '@/lib/characterUtils';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import type {
   ActiveMorningEvent,
@@ -26,6 +27,11 @@ const EVENT_ORDER: MorningEvent[] = [
   'DOCTOR_DEFEND',
   'REPORTER_NEWS',
 ];
+
+type IdentityRevealStep =
+  | 'NONE'
+  | 'REVEAL_MAFIA_CHECK'
+  | 'REVEAL_FULL_ROLE';
 
 function sortMorningEvents(events: ActiveMorningEvent[]): ActiveMorningEvent[] {
   return [...events].sort(
@@ -132,6 +138,8 @@ export function MorningSequenceModal({
   onClose: () => void;
 }) {
   const [eventIndex, setEventIndex] = useState(0);
+  const [identityStep, setIdentityStep] =
+    useState<IdentityRevealStep>('NONE');
   const onCloseRef = useRef(onClose);
   const sequence = useMemo<ActiveMorningEvent[]>(() => {
     if (activeEvents.length > 0) return sortMorningEvents(activeEvents);
@@ -164,26 +172,66 @@ export function MorningSequenceModal({
   const currentType = currentEvent?.event ?? null;
   const currentSuccess = currentEvent?.success;
   const isMafiaKill = currentType === 'MAFIA_KILL';
+  const identityTargetId = currentEvent?.targetId ?? null;
+  const identityRole = identityTargetId
+    ? result?.deadRoles?.[identityTargetId] ??
+      (revealRoles ? players[identityTargetId]?.role : null)
+    : null;
+  const canRevealIdentity = Boolean(
+    open &&
+      revealRoles &&
+      isMafiaKill &&
+      identityTargetId &&
+      result?.deadPlayerIds.includes(identityTargetId) &&
+      identityRole,
+  );
+
   useEffect(() => {
     if (!open || !currentType) return;
     // 특보 단계의 셔터·타자기 효과음은 신문 컴포넌트가 등장할 때 재생한다.
-    if (currentType !== 'REPORTER_NEWS') {
+    if (identityStep === 'NONE' && currentType !== 'REPORTER_NEWS') {
       void playMorningEventSound(currentType, {
         success: currentSuccess,
       }).catch(() => {
         /* 오디오 실패는 연출을 막지 않는다 */
       });
     }
+
+    if (canRevealIdentity && identityStep === 'NONE') {
+      const timer = window.setTimeout(
+        () => setIdentityStep('REVEAL_MAFIA_CHECK'),
+        2400,
+      );
+      return () => window.clearTimeout(timer);
+    }
+
+    if (canRevealIdentity && identityStep === 'REVEAL_MAFIA_CHECK') {
+      const timer = window.setTimeout(
+        () => setIdentityStep('REVEAL_FULL_ROLE'),
+        1900,
+      );
+      return () => window.clearTimeout(timer);
+    }
+
     const timer = window.setTimeout(() => {
+      setIdentityStep('NONE');
       if (eventIndex >= sequence.length - 1) {
         setEventIndex(0);
         onCloseRef.current();
       } else {
         setEventIndex((index) => index + 1);
       }
-    }, 2400);
+    }, canRevealIdentity && identityStep === 'REVEAL_FULL_ROLE' ? 2500 : 2400);
     return () => window.clearTimeout(timer);
-  }, [open, currentType, currentSuccess, eventIndex, sequence.length]);
+  }, [
+    canRevealIdentity,
+    currentSuccess,
+    currentType,
+    eventIndex,
+    identityStep,
+    sequence.length,
+    result,
+  ]);
 
   // open 이어도 큐/결과가 없으면 렌더하지 않음 (훅 이후 early return)
   if (!open || !currentEvent || !result) return null;
@@ -191,9 +239,11 @@ export function MorningSequenceModal({
   const lastEvent = eventIndex >= sequence.length - 1;
   const closePopup = () => {
     setEventIndex(0);
+    setIdentityStep('NONE');
     onClose();
   };
   const nextOrClose = () => {
+    setIdentityStep('NONE');
     if (lastEvent) {
       closePopup();
     } else {
@@ -265,6 +315,7 @@ export function MorningSequenceModal({
                 players={players}
                 revealRoles={revealRoles}
                 event={currentEvent}
+                identityStep={identityStep}
                 onClose={closePopup}
                 onNext={nextOrClose}
                 hasNext={!lastEvent}
@@ -347,6 +398,7 @@ function MafiaKillPanel({
   players,
   revealRoles,
   event,
+  identityStep,
   onClose,
   onNext,
   hasNext,
@@ -355,6 +407,7 @@ function MafiaKillPanel({
   players: Record<string, Player>;
   revealRoles: boolean;
   event: ActiveMorningEvent;
+  identityStep: IdentityRevealStep;
   onClose: () => void;
   onNext: () => void;
   hasNext: boolean;
@@ -369,6 +422,9 @@ function MafiaKillPanel({
   const deadRole = targetId
     ? result.deadRoles?.[targetId] ?? (revealRoles && wasKilled ? target?.role : null)
     : null;
+  const isFullRole = identityStep === 'REVEAL_FULL_ROLE';
+  const isIdentityReveal =
+    wasKilled && revealRoles && deadRole && identityStep !== 'NONE';
   const displayAvatarId = target?.avatarId ?? dead?.avatarId;
 
   return (
@@ -387,8 +443,16 @@ function MafiaKillPanel({
           <div className="relative flex h-44 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_50%_45%,rgba(127,29,29,0.85),rgba(11,10,25,0.92)_70%)]">
             <CharacterAvatar
               avatarId={displayAvatarId}
-              isAlive={!wasKilled}
-              state={wasKilled ? 'dead' : null}
+              isAlive={isFullRole ? true : !wasKilled}
+              role={deadRole ?? target?.role}
+              revealRole={isFullRole}
+              state={
+                isFullRole && deadRole
+                  ? getCharacterStateForRole(deadRole)
+                  : wasKilled
+                    ? 'dead'
+                    : null
+              }
               size={108}
               className="relative z-10"
             />
@@ -433,12 +497,26 @@ function MafiaKillPanel({
             추가 탈락자 {deadIds.length - 1}명
           </p>
         )}
-        {deadRole && revealRoles && wasKilled && (
-          <p className="relative mt-5 rounded-xl bg-red-950/80 px-4 py-3 text-center text-sm font-bold text-red-100 ring-1 ring-red-300/20">
-            (탈락한 {deadName} 님의 직업은{' '}
-            <span className="font-black text-amber-200">{ROLE_LABELS[deadRole]}</span>
-            이었습니다.)
-          </p>
+        {isIdentityReveal && deadRole && (
+          <motion.div
+            key={identityStep}
+            initial={{ opacity: 0, y: 8, filter: 'blur(5px)' }}
+            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+            className="relative mt-5 rounded-xl bg-red-950/80 px-4 py-3 text-center text-sm font-bold text-red-100 ring-1 ring-red-300/20"
+          >
+            <p className="text-base font-black">
+              {isFullRole
+                ? `${deadName} 님의 정체는 ${ROLE_LABELS[deadRole]}였습니다.`
+                : `${deadName} 님은... 마피아가... ${
+                    deadRole === 'MAFIA' ? '맞습니다!' : '아닙니다!'
+                  }`}
+            </p>
+            {isFullRole && (
+              <p className="mt-1 text-xs font-bold text-white/65">
+                직업 이미지 공개 · {ROLE_LABELS[deadRole]}
+              </p>
+            )}
+          </motion.div>
         )}
         <p className="relative mt-5 text-center text-xs font-medium text-white/50">
           차가운 밤이 지나갔습니다. 생존자들은 서로를 믿어야 합니다.

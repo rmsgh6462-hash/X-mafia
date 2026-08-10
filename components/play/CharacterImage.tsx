@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ImgHTMLAttributes } from 'react';
 import {
-  getCharacterImage,
+  getCharacterImageUrl,
   type CharacterState,
 } from '@/lib/characterUtils';
 
@@ -12,6 +12,8 @@ type CharacterImageProps = Omit<
 > & {
   characterId: string;
   state?: CharacterState;
+  /** 보안 뷰어 매핑으로 계산된 요청 URL. 누락 시 state로 생성한다. */
+  imageUrl?: string;
   onError?: ImgHTMLAttributes<HTMLImageElement>['onError'];
 };
 
@@ -23,18 +25,19 @@ type CharacterImageProps = Omit<
 export function CharacterImage({
   characterId,
   state = 'normal',
+  imageUrl,
   alt = '',
   onError,
   ...imageProps
 }: CharacterImageProps) {
-  const normalSrc = getCharacterImage(characterId, 'normal');
-  const requestedSrc = getCharacterImage(characterId, state);
+  const normalSrc = getCharacterImageUrl(characterId, 'normal');
+  const requestedSrc = imageUrl ?? getCharacterImageUrl(characterId, state);
   const fallbackSources = useMemo(() => {
     const sources = [requestedSrc];
 
     // 허탕 전용 일러스트가 아직 없는 캐릭터는 의사 상태를 거쳐 기본 상태로 대체한다.
     if (state === 'doctor_fail') {
-      sources.push(getCharacterImage(characterId, 'doctor'));
+      sources.push(getCharacterImageUrl(characterId, 'doctor'));
     }
     if (state !== 'normal') {
       sources.push(normalSrc);

@@ -30,15 +30,25 @@ import { isFirebaseConfigured } from '@/lib/firebase';
 import { playerGenderFromAvatarId } from '@/lib/game/avatars';
 import { getCharacterStateForRole } from '@/lib/characterUtils';
 import { playMorningEventSound } from '@/lib/game/audio';
-import { ROLE_LABELS } from '@/lib/game/roles';
-import { playerList, subscribeRoom } from '@/lib/game/room';
+import { ROLE_ACCENTS, ROLE_LABELS } from '@/lib/game/roles';
+import {
+  VOTE_RESULT_DURATION_MS,
+  playerList,
+  subscribeRoom,
+} from '@/lib/game/room';
 import type {
   ActiveMorningEvent,
   GameRoom,
   GameState,
   Player,
   PlayerGender,
+  Role,
 } from '@/types/game';
+
+type IdentityRevealStep =
+  | 'NONE'
+  | 'REVEAL_MAFIA_CHECK'
+  | 'REVEAL_FULL_ROLE';
 
 function formatPin(pin: string) {
   return pin.replace(/(\d{3})(\d{3})/, '$1 $2');
@@ -50,6 +60,7 @@ const STATE_LABELS: Record<GameState, string> = {
   DAY_MATCH: '낮 · 1:1 매칭',
   DAY_MISSION: '낮 · 미션',
   DAY_VOTE: '낮 · 투표',
+  VOTE_RESULT: '낮 · 투표 결과',
   NIGHT: '밤',
   RESULT: '아침 결과',
   ENDED: '게임 종료',
@@ -98,7 +109,10 @@ function toPublicRoom(source: GameRoom): GameRoom {
           targetGender: event.targetGender ?? null,
           success: event.success,
         })),
-        deadRoles: {},
+        deadRoles:
+          source.revealDeathRoles !== false
+            ? source.nightResults.deadRoles ?? {}
+            : {},
         actionLog: undefined,
         policeReport: null,
         quizHint: null,
@@ -154,6 +168,7 @@ function toPublicRoom(source: GameRoom): GameRoom {
     matchChatHistory: {},
     ghostPredictions: {},
     mafiaChat: {},
+    pendingRoleAssignments: null,
   };
 }
 
@@ -188,8 +203,14 @@ function fallbackPublicMorningEvents(
 
 function getTimerEnd(room: GameRoom | null): number | null {
   if (!room) return null;
+  if (room.gameState === 'DAY_TALK') return room.talkEndsAt;
   if (room.gameState === 'DAY_MATCH') return room.matchEndsAt;
   if (room.gameState === 'DAY_VOTE') return room.voteEndsAt;
+  if (room.gameState === 'VOTE_RESULT') {
+    return room.dayVoteResult?.resolvedAt
+      ? room.dayVoteResult.resolvedAt + VOTE_RESULT_DURATION_MS
+      : null;
+  }
   if (
     room.gameState === 'NIGHT' &&
     room.nightQuizState?.active &&
@@ -209,15 +230,19 @@ function phaseDescription(room: GameRoom): string {
     case 'WAITING':
       return '학생들이 캐릭터를 선택하고 입장하기를 기다리고 있습니다.';
     case 'DAY_TALK':
-      return '마을 광장에서 자유롭게 단서를 나누고 토론하세요.';
+      return room.talkEndsAt
+        ? '토론 시간이 진행 중입니다. 남은 시간 안에 단서를 나누세요.'
+        : '마을 광장에서 자유롭게 단서를 나누고 토론하세요.';
     case 'DAY_MATCH':
       return '짝과 조용히 이야기를 나누며 서로의 단서를 확인하세요.';
     case 'DAY_MISSION':
       return '모두가 함께 진행하는 낮 미션 시간입니다.';
     case 'DAY_VOTE':
       return '마피아라고 생각되는 학생을 신중하게 선택하세요.';
+    case 'VOTE_RESULT':
+      return '낮 투표 결과를 확인한 뒤 밤 세션으로 이동합니다.';
     case 'NIGHT':
-      return '마을이 잠들었습니다. 자기 자리로 돌아가 밤의 행동을 해주세요.';
+      return '자기 자리로 돌아가 퀴즈와 밤의 행동을 해주세요.';
     case 'RESULT':
       return '지난밤의 결과를 모두 함께 확인합니다.';
     case 'ENDED':
@@ -244,6 +269,24 @@ function PublicStats({ room }: { room: GameRoom }) {
   );
 }
 
+function stageHeadline(state: GameState): string {
+  if (state === 'NIGHT') return '밤이 되었습니다.';
+  if (state === 'RESULT') return '아침이 되었습니다.';
+  if (state === 'VOTE_RESULT') return '투표 결과를 발표합니다.';
+  if (
+    state === 'DAY_TALK' ||
+    state === 'DAY_MATCH' ||
+    state === 'DAY_MISSION' ||
+    state === 'DAY_VOTE'
+  ) {
+    return '낮이 되었습니다.';
+  }
+  return STATE_LABELS[state];
+}
+
+const NIGHT_START_NOTICE =
+  '마을에 어둠이 내려앉았습니다. 모두가 잠든 밤, 활동을 시작해주세요.';
+
 function PublicStage({ room, now }: { room: GameRoom; now: number }) {
   const timerEnd = getTimerEnd(room);
   const remaining = timerEnd ? Math.max(0, Math.ceil((timerEnd - now) / 1000)) : 0;
@@ -261,21 +304,36 @@ function PublicStage({ room, now }: { room: GameRoom; now: number }) {
         {room.gameState === 'WAITING' ? '입장 대기' : null}
       </div>
       <h1 className="mt-5 text-balance text-5xl font-black tracking-tight text-white drop-shadow-lg sm:text-8xl">
-        {STATE_LABELS[room.gameState]}
+        {stageHeadline(room.gameState)}
       </h1>
-      <p className="mx-auto mt-5 max-w-2xl text-lg font-semibold text-white/75 sm:text-2xl">
-        {phaseDescription(room)}
-      </p>
+      {isNight ? (
+        <p className="mx-auto mt-4 max-w-2xl text-sm font-medium leading-relaxed text-white/55 sm:text-base">
+          {NIGHT_START_NOTICE}
+        </p>
+      ) : (
+        <p className="mx-auto mt-5 max-w-2xl text-lg font-semibold text-white/75 sm:text-2xl">
+          {phaseDescription(room)}
+        </p>
+      )}
 
       {remaining > 0 && (
         <div className="mx-auto mt-9 max-w-md rounded-3xl bg-black/35 px-6 py-5 ring-1 ring-white/15">
           <p className="flex items-center justify-center gap-2 text-xs font-black uppercase tracking-[0.28em] text-white/55">
             <Clock3 className="h-4 w-4" />
-            남은 시간
+            {room.gameState === 'DAY_TALK'
+              ? '남은 토론 시간'
+              : room.gameState === 'DAY_VOTE'
+                ? '남은 투표 시간'
+                : '남은 시간'}
           </p>
           <p className={`mt-2 font-mono text-8xl font-black tabular-nums sm:text-[10rem] ${remaining <= 5 ? 'text-red-300' : 'text-amber-200'}`}>
             {formatSeconds(remaining)}
           </p>
+          {room.gameState === 'DAY_TALK' && (
+            <p className="text-sm font-bold text-white/60">
+              시간이 끝나면 투표가 시작됩니다
+            </p>
+          )}
           {room.gameState === 'NIGHT' && room.nightQuizState?.active && (
             <p className="text-sm font-bold text-white/60">밤 퀴즈 진행 중</p>
           )}
@@ -296,10 +354,12 @@ function PublicMorningEvent({
   event,
   room,
   avatarSize,
+  identityStep = 'NONE',
 }: {
   event: ActiveMorningEvent;
   room: GameRoom;
   avatarSize: number;
+  identityStep?: IdentityRevealStep;
 }) {
   const target = event.targetId ? room.players[event.targetId] : null;
   const targetName = event.targetName ?? target?.name ?? '학생';
@@ -307,6 +367,27 @@ function PublicMorningEvent({
   const wasKilled = Boolean(
     event.targetId && (room.nightResults?.deadPlayerIds ?? []).includes(event.targetId),
   );
+  const deadRole =
+    event.event === 'MAFIA_KILL' && event.targetId
+      ? room.nightResults?.deadRoles?.[event.targetId] ?? null
+      : null;
+
+  if (
+    event.event === 'MAFIA_KILL' &&
+    wasKilled &&
+    deadRole &&
+    identityStep !== 'NONE'
+  ) {
+    return (
+      <PublicIdentityReveal
+        avatarId={target?.avatarId}
+        name={targetName}
+        role={deadRole}
+        step={identityStep}
+        avatarSize={avatarSize}
+      />
+    );
+  }
 
   if (event.event === 'MAFIA_KILL') {
     return (
@@ -314,7 +395,7 @@ function PublicMorningEvent({
         key="public-mafia-kill"
         initial={{ opacity: 0, scale: 0.9, x: 24 }}
         animate={{ opacity: 1, scale: 1, x: 0 }}
-        className="morning-panel-shake relative w-full max-w-6xl overflow-hidden rounded-[2rem] border border-red-300/35 bg-[#0a0816]/85 text-white shadow-2xl shadow-red-950/60"
+        className={`morning-panel-shake relative w-full max-w-6xl overflow-hidden rounded-[2rem] border border-red-300/35 bg-[#0a0816]/85 text-white shadow-2xl shadow-red-950/60 ${wasKilled ? 'morning-dead-reveal' : ''}`}
       >
         <div className="absolute inset-x-0 top-0 h-2 bg-gradient-to-r from-red-700 via-rose-300 to-red-700" />
         <div className="grid items-center gap-8 p-6 sm:p-10 lg:grid-cols-[1.25fr_1fr] lg:p-14">
@@ -518,6 +599,84 @@ function PublicMorningEvent({
   );
 }
 
+function PublicIdentityReveal({
+  avatarId,
+  name,
+  role,
+  step,
+  avatarSize,
+}: {
+  avatarId?: string;
+  name: string;
+  role: Role;
+  step: Exclude<IdentityRevealStep, 'NONE'>;
+  avatarSize: number;
+}) {
+  const isMafia = role === 'MAFIA';
+  const isFullRole = step === 'REVEAL_FULL_ROLE';
+  const accent = ROLE_ACCENTS[role];
+
+  return (
+    <motion.section
+      key={`identity-reveal-${name}-${role}-${step}`}
+      initial={{ opacity: 0, scale: 0.88, y: 18 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      className={`relative flex min-h-[58vh] w-full max-w-5xl flex-col items-center justify-center overflow-hidden rounded-[2rem] border text-center text-white shadow-2xl ${
+        isMafia
+          ? 'border-red-300/55 bg-[#19080b]/95 shadow-red-950/70'
+          : 'border-sky-300/55 bg-[#071728]/95 shadow-sky-950/70'
+      }`}
+    >
+      <div
+        className="pointer-events-none absolute inset-0 opacity-35"
+        style={{
+          background: `radial-gradient(circle at 50% 34%, ${accent}88, transparent 48%), linear-gradient(135deg, ${isMafia ? '#7f1d1d' : '#0c4a6e'}66, transparent 60%)`,
+        }}
+      />
+      <div className="relative z-10 flex flex-col items-center px-6 py-10 sm:px-12">
+        <p className={`text-xl font-black tracking-[0.24em] sm:text-3xl ${isMafia ? 'text-red-200' : 'text-sky-200'}`}>
+          {name} 님은...
+        </p>
+        <div className={`relative mt-7 rounded-[2rem] p-3 ring-4 ${isMafia ? 'bg-red-950/60 ring-red-300/35' : 'bg-sky-950/60 ring-sky-300/35'}`}>
+          <CharacterAvatar
+            avatarId={avatarId}
+            isAlive
+            role={role}
+            revealRole
+            state={getCharacterStateForRole(role)}
+            size={Math.max(300, Math.round(avatarSize * 0.68))}
+            className={`transition-all duration-500 ${isFullRole ? 'scale-105' : 'scale-95 blur-[4px] opacity-70'}`}
+          />
+          {!isFullRole && (
+            <div className="absolute inset-0 flex items-center justify-center rounded-[2rem] bg-black/10">
+              <span className="rounded-full bg-black/60 px-5 py-2 text-sm font-black tracking-[0.2em] text-white/80">
+                정체 확인 중
+              </span>
+            </div>
+          )}
+        </div>
+        <motion.h1
+          key={step}
+          initial={{ opacity: 0, y: 10, filter: 'blur(6px)' }}
+          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+          className={`mt-8 text-balance text-4xl font-black leading-tight sm:text-6xl ${isMafia ? 'text-red-100' : 'text-sky-100'}`}
+        >
+          {isFullRole
+            ? `${name} 님의 정체는 ${ROLE_LABELS[role]}였습니다.`
+            : isMafia
+              ? '마피아가... 맞습니다!'
+              : '마피아가... 아닙니다!'}
+        </motion.h1>
+        <p className="mt-5 text-base font-bold text-white/65 sm:text-xl">
+          {isFullRole
+            ? `직업 이미지 공개 · ${ROLE_LABELS[role]}`
+            : '잠시만 기다려 주세요...'}
+        </p>
+      </div>
+    </motion.section>
+  );
+}
+
 function PublicEliminatedStrip({ room }: { room: GameRoom }) {
   const eliminated = playerList(room).filter((player) => !player.isAlive).slice(-4);
   if (eliminated.length === 0) return null;
@@ -552,15 +711,41 @@ function PublicVoteResult({
   avatarSize: number;
 }) {
   const result = room.dayVoteResult;
-  if (!result) return null;
+  const [identityStep, setIdentityStep] = useState<IdentityRevealStep>('NONE');
 
-  const eliminated = result.eliminatedPlayerId
+  const eliminated = result?.eliminatedPlayerId
     ? room.players[result.eliminatedPlayerId]
     : null;
+  const canRevealIdentity = Boolean(
+    room.revealDeathRoles !== false && result?.eliminatedRole && eliminated,
+  );
   const roleLabel =
-    room.revealDeathRoles !== false && result.eliminatedRole
+    canRevealIdentity && result?.eliminatedRole
       ? ROLE_LABELS[result.eliminatedRole]
       : null;
+
+  useEffect(() => {
+    if (!canRevealIdentity) return;
+    if (identityStep === 'NONE') {
+      const timer = window.setTimeout(
+        () => setIdentityStep('REVEAL_MAFIA_CHECK'),
+        2600,
+      );
+      return () => window.clearTimeout(timer);
+    }
+    if (identityStep === 'REVEAL_MAFIA_CHECK') {
+      const timer = window.setTimeout(
+        () => setIdentityStep('REVEAL_FULL_ROLE'),
+        1900,
+      );
+      return () => window.clearTimeout(timer);
+    }
+  }, [canRevealIdentity, identityStep, result?.resolvedAt]);
+
+  if (!result) return null;
+
+  const isFullRole = identityStep === 'REVEAL_FULL_ROLE';
+  const isMafia = result.eliminatedRole === 'MAFIA';
 
   return (
     <motion.section
@@ -578,10 +763,14 @@ function PublicVoteResult({
           {eliminated ? (
             <CharacterAvatar
               avatarId={eliminated.avatarId}
-              isAlive={false}
-              state="arrested"
+              isAlive={isFullRole}
+              role={result.eliminatedRole}
+              revealRole={isFullRole}
+              state={isFullRole && result.eliminatedRole
+                ? getCharacterStateForRole(result.eliminatedRole)
+                : 'arrested'}
               size={avatarSize}
-              className="relative z-10"
+              className={`relative z-10 transition-all duration-500 ${isFullRole ? 'scale-105' : ''}`}
             />
           ) : (
             <Skull className="relative z-10 h-40 w-40 text-amber-200/75 sm:h-56 sm:w-56" />
@@ -606,10 +795,24 @@ function PublicVoteResult({
                 ? `${eliminated.name} 님이 투표로 체포되었습니다.`
                 : '이번 투표에서 체포된 학생은 없습니다.')}
           </p>
-          {roleLabel && (
-            <p className="mt-6 inline-flex rounded-full bg-amber-300 px-5 py-2 text-xl font-black text-stone-950 shadow-lg shadow-amber-950/35 sm:text-2xl">
-              공개 직업: {roleLabel}
-            </p>
+          {canRevealIdentity && result.eliminatedRole && identityStep !== 'NONE' && (
+            <motion.div
+              key={identityStep}
+              initial={{ opacity: 0, y: 10, filter: 'blur(6px)' }}
+              animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+              className={`mt-7 rounded-2xl px-5 py-4 ring-1 ${isMafia ? 'bg-red-950/70 text-red-100 ring-red-300/40' : 'bg-sky-950/70 text-sky-100 ring-sky-300/40'}`}
+            >
+              <p className="text-lg font-black sm:text-2xl">
+                {isFullRole
+                  ? `${eliminated?.name ?? '학생'} 님의 정체는 ${roleLabel}였습니다.`
+                  : `${eliminated?.name ?? '학생'} 님은... 마피아가... ${isMafia ? '맞습니다!' : '아닙니다!'}`}
+              </p>
+              {isFullRole && (
+                <p className="mt-2 text-sm font-bold text-white/70 sm:text-base">
+                  직업 이미지 공개 · {roleLabel}
+                </p>
+              )}
+            </motion.div>
           )}
           {result.wasTie && (
             <p className="mt-5 text-base font-bold text-amber-100/75 sm:text-xl">
@@ -675,6 +878,8 @@ export default function HostDisplayPage() {
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [morningIndex, setMorningIndex] = useState(0);
+  const [morningIdentityStep, setMorningIdentityStep] =
+    useState<IdentityRevealStep>('NONE');
   const [displayAvatarSize, setDisplayAvatarSize] = useState(520);
 
   useEffect(() => {
@@ -748,24 +953,64 @@ export default function HostDisplayPage() {
   );
   const currentMorningEvent = morningEvents[morningIndex] ?? null;
   const showMorningSequence = room?.gameState === 'RESULT' && Boolean(currentMorningEvent);
-  const showVoteResult = Boolean(
-    room?.dayVoteResult &&
-      room.gameState !== 'RESULT' &&
-      room.gameState !== 'ENDED',
-  );
+  const showVoteResult =
+    room?.gameState === 'VOTE_RESULT' && Boolean(room.dayVoteResult);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setMorningIndex(0), 0);
+    const timer = window.setTimeout(() => {
+      setMorningIndex(0);
+      setMorningIdentityStep('NONE');
+    }, 0);
     return () => window.clearTimeout(timer);
   }, [morningKey]);
 
   useEffect(() => {
     if (room?.gameState !== 'RESULT' || !currentMorningEvent) return;
+    const deadTargetId = currentMorningEvent.targetId;
+    const canRevealIdentity = Boolean(
+      currentMorningEvent.event === 'MAFIA_KILL' &&
+        deadTargetId &&
+        room.revealDeathRoles !== false &&
+        room.nightResults?.deadPlayerIds.includes(deadTargetId) &&
+        room.nightResults.deadRoles?.[deadTargetId],
+    );
+
+    if (canRevealIdentity && morningIdentityStep === 'NONE') {
+      const timer = window.setTimeout(
+        () => setMorningIdentityStep('REVEAL_MAFIA_CHECK'),
+        2600,
+      );
+      return () => window.clearTimeout(timer);
+    }
+
+    if (canRevealIdentity && morningIdentityStep === 'REVEAL_MAFIA_CHECK') {
+      const timer = window.setTimeout(
+        () => setMorningIdentityStep('REVEAL_FULL_ROLE'),
+        1900,
+      );
+      return () => window.clearTimeout(timer);
+    }
+
+    const duration =
+      canRevealIdentity && morningIdentityStep === 'REVEAL_FULL_ROLE'
+        ? 2500
+        : 2600;
     const timer = window.setTimeout(() => {
-      setMorningIndex((index) => (index + 1 < morningEvents.length ? index + 1 : morningEvents.length));
-    }, 2600);
+      setMorningIdentityStep('NONE');
+      setMorningIndex((index) =>
+        index + 1 < morningEvents.length ? index + 1 : morningEvents.length,
+      );
+    }, duration);
     return () => window.clearTimeout(timer);
-  }, [currentMorningEvent, morningEvents.length, morningIndex, morningKey, room?.gameState]);
+  }, [
+    currentMorningEvent,
+    morningEvents.length,
+    morningIdentityStep,
+    morningKey,
+    room?.gameState,
+    room?.nightResults,
+    room?.revealDeathRoles,
+  ]);
 
   useEffect(() => {
     if (!showMorningSequence || !currentMorningEvent) return;
@@ -824,6 +1069,7 @@ export default function HostDisplayPage() {
                 event={currentMorningEvent}
                 room={room}
                 avatarSize={displayAvatarSize}
+                identityStep={morningIdentityStep}
               />
             </AnimatePresence>
           ) : room && showVoteResult ? (

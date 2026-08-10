@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import { Check, Crosshair, RefreshCw, Target, X } from 'lucide-react';
@@ -510,13 +510,12 @@ export function NightQuizMonitor({
   room,
   busy,
   now = Date.now(),
-  onFinalize,
 }: {
   room: GameRoom;
   busy?: boolean;
   now?: number;
-  onFinalize: () => void;
 }) {
+  void busy;
   const quiz = room.nightQuizState;
   const stats = useMemo(() => getNightQuizStats(room), [room]);
   const alive = alivePlayers(room);
@@ -624,17 +623,6 @@ export function NightQuizMonitor({
           );
         })}
       </ul>
-
-      {!done && (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onFinalize}
-          className="w-full rounded-xl bg-amber-400 py-3 text-sm font-black text-stone-900 disabled:opacity-50"
-        >
-          퀴즈 강제 마감
-        </button>
-      )}
     </div>
   );
 }

@@ -84,8 +84,8 @@ export function MafiaChatPanel({
       {!collapsed && (
         <>
           <p className="mt-2 rounded-lg bg-black/30 px-2.5 py-2 text-[11px] font-semibold leading-snug text-red-100/85">
-            생존 마피아끼리만 보이는 비밀 대화입니다. 교사 화면에는 실시간으로
-            표시됩니다.
+            생존 마피아끼리만 보이는 비밀 대화입니다. 마피아인 것을 들킬 수
+            있으니 신중히 대화하세요.
           </p>
           <div className="mt-2 flex h-56 flex-col rounded-xl bg-black/40">
             <div className="flex-1 space-y-2 overflow-y-auto px-2.5 py-2">

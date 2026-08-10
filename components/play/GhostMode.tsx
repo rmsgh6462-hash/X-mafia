@@ -40,6 +40,7 @@ const STATE_LABELS: Record<GameState, string> = {
   DAY_MATCH: '낮 · 1:1 매칭',
   DAY_MISSION: '낮 · 미션',
   DAY_VOTE: '낮 · 투표',
+  VOTE_RESULT: '낮 · 투표 결과',
   NIGHT: '밤',
   RESULT: '아침 결과',
   ENDED: '종료',

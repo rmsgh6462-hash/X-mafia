@@ -1,9 +1,16 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { Popup } from '@/components/play/Popup';
+import { getCharacterStateForRole } from '@/lib/characterUtils';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import type { DayVoteResult, Player } from '@/types/game';
+
+type IdentityRevealStep =
+  | 'NONE'
+  | 'REVEAL_MAFIA_CHECK'
+  | 'REVEAL_FULL_ROLE';
 
 export function VoteResultModal({
   open,
@@ -18,7 +25,36 @@ export function VoteResultModal({
   revealRoles: boolean;
   onClose: () => void;
 }) {
-  const role = revealRoles ? result?.eliminatedRole : null;
+  const [identityStep, setIdentityStep] =
+    useState<IdentityRevealStep>('NONE');
+  const canRevealIdentity = Boolean(
+    open && revealRoles && result?.eliminatedRole && eliminatedPlayer,
+  );
+  const isFullRole = identityStep === 'REVEAL_FULL_ROLE';
+  const isMafia = result?.eliminatedRole === 'MAFIA';
+
+  useEffect(() => {
+    if (!canRevealIdentity) {
+      if (identityStep !== 'NONE') setIdentityStep('NONE');
+      return;
+    }
+
+    if (identityStep === 'NONE') {
+      const timer = window.setTimeout(
+        () => setIdentityStep('REVEAL_MAFIA_CHECK'),
+        2200,
+      );
+      return () => window.clearTimeout(timer);
+    }
+
+    if (identityStep === 'REVEAL_MAFIA_CHECK') {
+      const timer = window.setTimeout(
+        () => setIdentityStep('REVEAL_FULL_ROLE'),
+        1900,
+      );
+      return () => window.clearTimeout(timer);
+    }
+  }, [canRevealIdentity, eliminatedPlayer?.id, identityStep, result?.resolvedAt]);
 
   return (
     <Popup
@@ -31,8 +67,14 @@ export function VoteResultModal({
         <div className="mb-4 flex items-center gap-3 rounded-xl bg-red-950/45 px-3 py-3 ring-1 ring-red-400/25">
           <CharacterAvatar
             avatarId={eliminatedPlayer.avatarId}
-            isAlive={false}
-            state="arrested"
+            isAlive={isFullRole}
+            role={result?.eliminatedRole}
+            revealRole={isFullRole}
+            state={
+              isFullRole && result?.eliminatedRole
+                ? getCharacterStateForRole(result.eliminatedRole)
+                : 'arrested'
+            }
             size={72}
           />
           <div className="min-w-0">
@@ -42,10 +84,28 @@ export function VoteResultModal({
         </div>
       )}
       <p className="text-base font-bold leading-snug">{result?.announcement}</p>
-      {role && (
-        <p className="mt-3 text-center text-sm font-black text-amber-200">
-          직업: {ROLE_LABELS[role]}
-        </p>
+      {canRevealIdentity && result?.eliminatedRole && identityStep !== 'NONE' && (
+        <div
+          key={identityStep}
+          className={`mt-4 rounded-xl px-4 py-3 text-center ring-1 ${
+            isMafia
+              ? 'bg-red-950/70 text-red-100 ring-red-300/35'
+              : 'bg-sky-950/70 text-sky-100 ring-sky-300/35'
+          }`}
+        >
+          <p className="text-base font-black">
+            {isFullRole
+              ? `${eliminatedPlayer?.name ?? '학생'} 님의 정체는 ${ROLE_LABELS[result.eliminatedRole]}였습니다.`
+              : `${eliminatedPlayer?.name ?? '학생'} 님은... 마피아가... ${
+                  isMafia ? '맞습니다!' : '아닙니다!'
+                }`}
+          </p>
+          {isFullRole && (
+            <p className="mt-1 text-xs font-bold text-white/70">
+              직업 이미지 공개 · {ROLE_LABELS[result.eliminatedRole]}
+            </p>
+          )}
+        </div>
       )}
     </Popup>
   );

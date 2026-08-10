@@ -1,6 +1,5 @@
 'use client';
 
-import { useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { Theme } from '@/types/game';
 
@@ -9,6 +8,7 @@ export type BackgroundPhase = 'WAITING' | 'DAY' | 'NIGHT' | 'RESULT';
 export interface GameBackgroundProps {
   theme: Theme;
   gameState: BackgroundPhase;
+  /** @deprecated 떠다니는 픽셀 캐릭터는 제거됨. 호환용으로만 유지. */
   playerCount?: number;
   className?: string;
   children?: React.ReactNode;
@@ -47,63 +47,6 @@ function getOverlayClass(gameState: BackgroundPhase): string {
   }
 }
 
-function seeded(seed: number): number {
-  const x = Math.sin(seed * 12.9898) * 43758.5453;
-  return x - Math.floor(x);
-}
-
-function PixelCharacter({ index }: { index: number }) {
-  const palette = [
-    { body: '#E8A87C', accent: '#6B8E4E', hat: '#C45C26' },
-    { body: '#F2C4A0', accent: '#4A7C59', hat: '#8B5A2B' },
-    { body: '#D4A574', accent: '#5B7C99', hat: '#A0522D' },
-    { body: '#E0B090', accent: '#9B6B9E', hat: '#5D4037' },
-  ];
-  const colors = palette[index % palette.length];
-  const left = 6 + seeded(index + 1) * 88;
-  const top = 18 + seeded(index + 7) * 55;
-  const size = 42 + Math.floor(seeded(index + 3) * 22);
-  const duration = 3.2 + seeded(index + 11) * 2.4;
-  const delay = seeded(index + 17) * 1.8;
-  const xDrift = (seeded(index + 23) - 0.5) * 28;
-
-  return (
-    <motion.div
-      className="pointer-events-none absolute"
-      style={{ left: left + '%', top: top + '%', width: size, height: size }}
-      initial={{ opacity: 0, y: 24, scale: 0.6 }}
-      animate={{
-        opacity: 1,
-        y: [0, -14, 0, -8, 0],
-        x: [0, xDrift, 0],
-        scale: 1,
-      }}
-      transition={{
-        opacity: { duration: 0.6, delay },
-        y: { duration, delay, repeat: Infinity, ease: 'easeInOut' },
-        x: {
-          duration: duration * 1.2,
-          delay,
-          repeat: Infinity,
-          ease: 'easeInOut',
-        },
-      }}
-    >
-      <svg viewBox="0 0 16 16" width="100%" height="100%" aria-hidden>
-        <rect x="5" y="1" width="6" height="2" fill={colors.hat} />
-        <rect x="4" y="3" width="8" height="5" fill={colors.body} />
-        <rect x="5" y="5" width="2" height="2" fill="#1a1a1a" />
-        <rect x="9" y="5" width="2" height="2" fill="#1a1a1a" />
-        <rect x="6" y="7" width="4" height="1" fill="#c4785a" />
-        <rect x="4" y="9" width="8" height="4" fill={colors.accent} />
-        <rect x="5" y="10" width="6" height="2" fill="#ffffff" opacity="0.35" />
-        <rect x="4" y="13" width="3" height="3" fill="#2c2c2c" />
-        <rect x="9" y="13" width="3" height="3" fill="#2c2c2c" />
-      </svg>
-    </motion.div>
-  );
-}
-
 function MistLayer({ active }: { active: boolean }) {
   return (
     <AnimatePresence>
@@ -134,7 +77,6 @@ function MistLayer({ active }: { active: boolean }) {
 export default function GameBackground({
   theme,
   gameState,
-  playerCount = 0,
   className = '',
   children,
 }: GameBackgroundProps) {
@@ -142,12 +84,6 @@ export default function GameBackground({
   const scene = SCENE_IMAGES[sceneKey];
   const overlayClass = getOverlayClass(gameState);
   const isNight = gameState === 'NIGHT';
-  const showFloaters = gameState === 'WAITING' && playerCount > 0;
-
-  const floaters = useMemo(
-    () => Array.from({ length: Math.min(playerCount, 24) }, (_, i) => i),
-    [playerCount],
-  );
 
   return (
     <div
@@ -213,16 +149,6 @@ export default function GameBackground({
           }}
         />
       )}
-
-      <AnimatePresence>
-        {showFloaters && (
-          <div className="absolute inset-0 z-[4]">
-            {floaters.map((index) => (
-              <PixelCharacter key={index} index={index} />
-            ))}
-          </div>
-        )}
-      </AnimatePresence>
 
       {children && (
         <div className="relative z-[10] h-full w-full">{children}</div>

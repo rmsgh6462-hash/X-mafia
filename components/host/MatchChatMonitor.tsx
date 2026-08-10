@@ -188,12 +188,20 @@ export function MatchChatMonitor({
                       size={28}
                       isAlive={a?.isAlive ?? true}
                       previewOnHover
+                      role={a?.role}
+                      viewerRole="TEACHER"
+                      targetPlayerId={a?.id}
+                      viewerPlayerId={null}
                     />
                     <CharacterAvatar
                       avatarId={b?.avatarId}
                       size={28}
                       isAlive={b?.isAlive ?? true}
                       previewOnHover
+                      role={b?.role}
+                      viewerRole="TEACHER"
+                      targetPlayerId={b?.id}
+                      viewerPlayerId={null}
                     />
                   </div>
                   <div className="min-w-0 flex-1">

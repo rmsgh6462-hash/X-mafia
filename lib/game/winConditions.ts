@@ -26,6 +26,7 @@ function endWithWinner(room: GameRoom, winnerSide: WinnerSide): GameRoom {
     victoryTeam: winnerSide,
     matchEndsAt: null,
     voteEndsAt: null,
+    talkEndsAt: null,
     voteRevoteCandidates: null,
     isMafiaBuffActive: false,
   };

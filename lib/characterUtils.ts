@@ -1,5 +1,7 @@
 import type { Role } from '@/types/game';
 
+export type CharacterViewerRole = Role | 'TEACHER';
+
 export type CharacterState =
   | 'normal'
   | 'doctor'
@@ -31,6 +33,14 @@ export function getCharacterImage(
   return `/images/characters/${characterId}/${state}.png`;
 }
 
+/** 공개 연출 코드에서 사용하는 명시적 URL 별칭. CharacterImage의 fallback은 동일하게 적용된다. */
+export function getCharacterImageUrl(
+  characterId: string,
+  state: CharacterState = 'normal',
+): string {
+  return getCharacterImage(characterId, state);
+}
+
 /** 직업을 캐릭터 상태 이미지로 변환한다. 시민은 기본 이미지를 사용한다. */
 export function getCharacterStateForRole(
   role: Role | null | undefined,
@@ -49,4 +59,67 @@ export function getCharacterStateForRole(
     default:
       return 'normal';
   }
+}
+
+/**
+ * 직업 이미지 공개 여부를 결정한다.
+ * - 교사: 모든 학생의 직업 상태 이미지를 볼 수 있다.
+ * - 학생 본인: 자신의 직업 상태 이미지를 볼 수 있다.
+ * - 다른 학생: 직업과 무관하게 normal 이미지만 본다.
+ * 정보가 부족하면 안전하게 공개하지 않는 쪽으로 처리한다.
+ */
+export function canRevealCharacterRoleImage({
+  viewerRole,
+  targetPlayerId,
+  viewerPlayerId,
+}: {
+  viewerRole?: CharacterViewerRole | null;
+  targetPlayerId?: string | null;
+  viewerPlayerId?: string | null;
+}): boolean {
+  if (viewerRole === 'TEACHER') return true;
+  return Boolean(
+    viewerPlayerId && targetPlayerId && viewerPlayerId === targetPlayerId,
+  );
+}
+
+/**
+ * 뷰어에 따라 직업 상태 이미지 URL을 안전하게 반환한다.
+ * role이 없거나 권한이 없으면 항상 같은 캐릭터의 normal.png를 반환한다.
+ */
+export function getSecuredCharacterImageUrl(
+  avatarId: string,
+  playerRole: Role | null | undefined,
+  viewerRole: CharacterViewerRole | null | undefined,
+  targetPlayerId: string | null | undefined,
+  viewerPlayerId: string | null | undefined,
+  revealRole = false,
+): string {
+  const state = revealRole ||
+    canRevealCharacterRoleImage({
+      viewerRole,
+      targetPlayerId,
+      viewerPlayerId,
+    })
+    ? getCharacterStateForRole(playerRole)
+    : 'normal';
+  return getCharacterImage(avatarId, state);
+}
+
+/** URL과 동일한 기준으로 CharacterAvatar의 상태를 계산할 때 사용한다. */
+export function getSecuredCharacterState(
+  playerRole: Role | null | undefined,
+  viewerRole: CharacterViewerRole | null | undefined,
+  targetPlayerId: string | null | undefined,
+  viewerPlayerId: string | null | undefined,
+  revealRole = false,
+): CharacterState {
+  return revealRole ||
+    canRevealCharacterRoleImage({
+      viewerRole,
+      targetPlayerId,
+      viewerPlayerId,
+    })
+    ? getCharacterStateForRole(playerRole)
+    : 'normal';
 }

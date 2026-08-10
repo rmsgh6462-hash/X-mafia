@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, Send, Sparkles } from 'lucide-react';
@@ -8,6 +8,7 @@ import { NightPanel } from '@/components/play/NightPanel';
 import { getNightQuizStats } from '@/lib/game/missions';
 import {
   finalizeNightQuizOnTimeout,
+  NIGHT_ACTIVITY_CLOSE_NOTICE,
   submitNightQuizAnswer,
 } from '@/lib/game/room';
 import type { GameRoom, Player } from '@/types/game';
@@ -35,6 +36,9 @@ export function NightSessionPanel({
 
   return (
     <div className="space-y-3">
+      <p className="rounded-xl bg-indigo-500/15 px-3 py-2 text-[11px] font-semibold leading-relaxed text-indigo-100/90 ring-1 ring-indigo-400/25">
+        {NIGHT_ACTIVITY_CLOSE_NOTICE}
+      </p>
       {hasAbility && (
         <div className="flex gap-1 rounded-xl bg-black/30 p-1">
           <TabBtn
@@ -223,13 +227,8 @@ export function NightQuizPlayPanel({
 
   return (
     <section className="space-y-3 rounded-2xl bg-indigo-950/45 p-4 ring-1 ring-indigo-400/25">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-black text-indigo-100">밤 미션 · 퀴즈</h3>
-          <p className="mt-2 text-base font-bold leading-snug text-white">
-            <MathText text={quiz.question} size="lg" />
-          </p>
-        </div>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-black text-indigo-100">밤 미션 · 퀴즈</h3>
         <div
           className={`rounded-xl px-3 py-2 text-center ${
             remainSec <= 5 ? 'bg-red-500/30' : 'bg-black/35'
@@ -280,6 +279,10 @@ export function NightQuizPlayPanel({
           }
         />
       </div>
+
+      <p className="text-base font-bold leading-snug text-white">
+        <MathText text={quiz.question} size="lg" />
+      </p>
 
       {!submission && quiz.active && quiz.outcome === 'PENDING' && !timedOut ? (
         <div className="space-y-2">

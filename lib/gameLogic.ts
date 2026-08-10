@@ -345,6 +345,7 @@ export function resolveNight(
     votes: {},
     matchEndsAt: null,
     voteEndsAt: null,
+    talkEndsAt: null,
     voteRevoteCandidates: null,
     gmEvent: openRevive ? 'REVIVE_NIGHT' : null,
     isMafiaBuffActive: false,

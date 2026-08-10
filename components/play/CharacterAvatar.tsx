@@ -11,7 +11,19 @@ import {
 import { createPortal } from 'react-dom';
 import { getAvatarDef, getAvatarSprite, type AvatarId } from '@/lib/game/avatars';
 import { CharacterImage } from '@/components/play/CharacterImage';
-import { type CharacterState } from '@/lib/characterUtils';
+import {
+  getSecuredCharacterImageUrl,
+  getSecuredCharacterState,
+  type CharacterState,
+  type CharacterViewerRole,
+} from '@/lib/characterUtils';
+import type { Role } from '@/types/game';
+
+const PUBLIC_EVENT_STATES: CharacterState[] = [
+  'dead',
+  'arrested',
+  'doctor_fail',
+];
 
 function AvatarFace({
   avatarId,
@@ -20,6 +32,11 @@ function AvatarFace({
   className = '',
   showLabel = false,
   state = null,
+  role = null,
+  viewerRole,
+  targetPlayerId,
+  viewerPlayerId,
+  revealRole = false,
 }: {
   avatarId: string | null | undefined;
   isAlive?: boolean;
@@ -28,9 +45,42 @@ function AvatarFace({
   showLabel?: boolean;
   /** 상태별 개별 이미지를 선택적으로 사용한다. 기본값 null이면 기존 스프라이트를 유지한다. */
   state?: CharacterState | null;
+  /** 이미지 대상 플레이어의 실제 직업. viewerRole과 함께 보안 매핑에 사용한다. */
+  role?: Role | null;
+  /** 현재 화면을 보는 주체의 역할. TEACHER면 모든 직업 이미지가 허용된다. */
+  viewerRole?: CharacterViewerRole | null;
+  targetPlayerId?: string | null;
+  viewerPlayerId?: string | null;
+  /** 공개된 정체 발표 단계에서만 직업 이미지 잠금을 해제한다. */
+  revealRole?: boolean;
 }) {
   const def = getAvatarDef(avatarId);
   const sprite = getAvatarSprite(def.id);
+  const hasViewerContext =
+    role != null &&
+    (revealRole ||
+      (viewerRole !== undefined && targetPlayerId !== undefined));
+  const securedImageUrl = hasViewerContext
+    ? getSecuredCharacterImageUrl(
+        def.id,
+        role,
+        viewerRole,
+        targetPlayerId,
+        viewerPlayerId,
+        revealRole,
+      )
+    : undefined;
+  const resolvedState = PUBLIC_EVENT_STATES.includes(state ?? 'normal')
+    ? state
+    : hasViewerContext
+      ? getSecuredCharacterState(
+          role,
+          viewerRole,
+          targetPlayerId,
+          viewerPlayerId,
+          revealRole,
+        )
+      : state;
 
   return (
     <div className={`inline-flex flex-col items-center ${className}`}>
@@ -48,10 +98,11 @@ function AvatarFace({
           transform: isAlive ? undefined : 'rotate(-4deg)',
         }}
       >
-        {state ? (
+        {resolvedState || securedImageUrl ? (
           <CharacterImage
             characterId={def.id}
-            state={state}
+            state={resolvedState ?? 'normal'}
+            imageUrl={securedImageUrl}
             alt=""
             className={`absolute inset-0 h-full w-full object-contain ${
               isAlive ? '' : 'grayscale brightness-[0.62] saturate-[0.7] opacity-80'
@@ -104,6 +155,11 @@ export function CharacterAvatar({
   previewOnHover = false,
   previewSize = 132,
   state = null,
+  role = null,
+  viewerRole,
+  targetPlayerId,
+  viewerPlayerId,
+  revealRole = false,
 }: {
   avatarId: string | null | undefined;
   isAlive?: boolean;
@@ -115,6 +171,13 @@ export function CharacterAvatar({
   previewOnHover?: boolean;
   previewSize?: number;
   state?: CharacterState | null;
+  /** 이미지 대상 플레이어의 실제 직업 */
+  role?: Role | null;
+  /** 본인 역할 또는 TEACHER. 다른 학생 역할 이미지는 공개하지 않는다. */
+  viewerRole?: CharacterViewerRole | null;
+  targetPlayerId?: string | null;
+  viewerPlayerId?: string | null;
+  revealRole?: boolean;
 }) {
   const tipId = useId();
   const anchorRef = useRef<HTMLDivElement>(null);
@@ -174,6 +237,11 @@ export function CharacterAvatar({
         size={size}
         showLabel={showLabel}
         state={state}
+        role={role}
+        viewerRole={viewerRole}
+        targetPlayerId={targetPlayerId}
+        viewerPlayerId={viewerPlayerId}
+        revealRole={revealRole}
       />
       {mounted &&
         previewOnHover &&
@@ -192,6 +260,11 @@ export function CharacterAvatar({
               size={previewSize}
               className="mx-auto"
               state={state}
+              role={role}
+              viewerRole={viewerRole}
+              targetPlayerId={targetPlayerId}
+              viewerPlayerId={viewerPlayerId}
+              revealRole={revealRole}
             />
           </div>,
           document.body,

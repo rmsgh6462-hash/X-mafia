@@ -52,6 +52,12 @@ body {
   100% { opacity: 0.96; transform: translate(-50%, -50%) scale(1); }
 }
 
+@keyframes morning-dead-reveal {
+  0% { opacity: 0; transform: translateY(-22px) scale(0.72) rotate(-2deg); filter: grayscale(1) brightness(1.35); }
+  55% { opacity: 1; transform: translateY(5px) scale(1.04) rotate(1deg); filter: grayscale(.85) brightness(.78); }
+  100% { opacity: 1; transform: translateY(0) scale(1) rotate(-1deg); filter: grayscale(.95) brightness(.62); }
+}
+
 .morning-screen-shake {
   animation: morning-screen-shake 560ms cubic-bezier(.36,.07,.19,.97) both;
 }
@@ -70,4 +76,10 @@ body {
 
 .morning-bullet-impact {
   animation: morning-bullet-impact 430ms cubic-bezier(.2,.8,.2,1) 120ms both;
+}
+
+.morning-dead-reveal {
+  animation:
+    morning-screen-shake 560ms cubic-bezier(.36,.07,.19,.97) both,
+    morning-dead-reveal 720ms cubic-bezier(.2,.8,.2,1) both;
 }

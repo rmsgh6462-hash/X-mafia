@@ -16,6 +16,7 @@ const BLINDED_SAME_ROLE: Role[] = [
  * 시민 특수직업은 빈 배열 — 절대 동료를 노출하지 않음.
  */
 export function getMafiaAllies(room: GameRoom, viewer: Player): Player[] {
+  if (room.gameState === 'WAITING') return [];
   if (viewer.role !== 'MAFIA') return [];
   return playerList(room).filter(
     (p) => p.role === 'MAFIA' && p.id !== viewer.id,
@@ -28,6 +29,7 @@ export function isMafiaViewer(viewer: Player | null | undefined): boolean {
 
 /**
  * 관전자(viewer)가 target에게 보여줄 직업 배지.
+ * - 대기(WAITING): 전원 비공개 (게임 시작 전 직업 유출 방지)
  * - 본인: 실제 직업
  * - 마피아 → 다른 마피아: 「마피아」
  * - 그 외(동일 경찰/의사/기자 포함): 표시 없음 (블라인드)
@@ -35,8 +37,10 @@ export function isMafiaViewer(viewer: Player | null | undefined): boolean {
 export function visibleRoleBadgeFor(
   viewer: Player | null | undefined,
   target: Player,
+  gameState?: GameRoom['gameState'] | null,
 ): string | null {
   if (!viewer) return null;
+  if (gameState === 'WAITING') return null;
 
   if (viewer.id === target.id) {
     return target.role ? ROLE_LABELS[target.role] : null;

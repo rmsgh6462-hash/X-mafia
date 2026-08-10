@@ -17,6 +17,7 @@ export type GameState =
   | 'DAY_MATCH'
   | 'DAY_MISSION'
   | 'DAY_VOTE'
+  | 'VOTE_RESULT'
   | 'NIGHT'
   | 'RESULT'
   | 'ENDED';
@@ -238,6 +239,14 @@ export interface NightResults {
 /** 개별 플레이어 */
 export type PlayerGender = 'boy' | 'girl';
 
+/** 교사가 학생에게 보낸 닉네임 재설정 요청 (Firebase 실시간) */
+export interface NicknameChangeRequest {
+  playerId: string;
+  /** 요청 시점의 기존 닉네임 — 재사용 금지 */
+  previousName: string;
+  requestedAt: number;
+}
+
 export interface Player {
   id: string;
   name: string;
@@ -292,6 +301,8 @@ export interface GameRoom {
   votes: Record<string, string>;
   matchEndsAt: number | null;
   voteEndsAt: number | null;
+  /** 낮 토론 타이머 종료 시각 (부여 시에만). 만료 시 자동 투표 전환 */
+  talkEndsAt: number | null;
   /** 동률 시 무작위 1명 탈락 | 동률자만 재투표 */
   voteTieResolution: VoteTieResolution;
   /** 탈락자 직업 즉시 공개 (ON=공개, OFF=탈락만 안내) */
@@ -321,6 +332,16 @@ export interface GameRoom {
   matchChats: Record<string, Record<string, MatchChatMessage>>;
   matchChatHistory: Record<string, MatchChatRound>;
   ghostPredictions: Record<string, WinnerSide>;
+  /**
+   * 교사가 특정 학생에게 닉네임 재설정을 요청한 상태.
+   * 해당 학생 클라이언트만 모달을 띄운다.
+   */
+  nicknameChangeRequest: NicknameChangeRequest | null;
+  /**
+   * 게임 시작 전 교사 확인용 직업 배정(학생 player.role 에는 넣지 않음).
+   * 게임 시작 시 실제 players[].role 로 이전되고 null 로 비운다.
+   */
+  pendingRoleAssignments: Record<string, Role | null> | null;
 }
 
 /** 밤 시작 시 퀴즈 설정 */

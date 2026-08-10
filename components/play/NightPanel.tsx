@@ -2,9 +2,10 @@
 
 import { useMemo, useState } from 'react';
 import { ROLE_LABELS } from '@/lib/game/roles';
-import { setNightTarget } from '@/lib/game/room';
+import { NIGHT_ACTIVITY_CLOSE_NOTICE, setNightTarget } from '@/lib/game/room';
 import { getMafiaAllies } from '@/lib/game/visibility';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
+import type { CharacterViewerRole } from '@/lib/characterUtils';
 import type { GameRoom, Player, Role } from '@/types/game';
 
 function PlayerPickList({
@@ -15,6 +16,8 @@ function PlayerPickList({
   disabledIds,
   disabledHints,
   allyBadgeIds,
+  viewerRole,
+  viewerPlayerId,
 }: {
   players: Player[];
   selectedId: string | null;
@@ -24,6 +27,8 @@ function PlayerPickList({
   disabledHints?: Record<string, string>;
   /** 마피아 동료 — [마피아] 배지 */
   allyBadgeIds?: Set<string>;
+  viewerRole?: CharacterViewerRole | null;
+  viewerPlayerId?: string | null;
 }) {
   return (
     <div className="grid grid-cols-2 gap-3">
@@ -57,6 +62,10 @@ function PlayerPickList({
                 avatarId={p.avatarId}
                 isAlive={p.isAlive}
                 size={36}
+                role={p.role}
+                viewerRole={viewerRole}
+                targetPlayerId={p.id}
+                viewerPlayerId={viewerPlayerId}
               />
               <span className="min-w-0 flex-1 truncate text-left">{p.name}</span>
               {isAlly && (
@@ -164,8 +173,14 @@ export function NightPanel({
     room.gmEvent === 'SILENCE_NIGHT' &&
     (role === 'POLICE' || role === 'DOCTOR');
 
+  const quiz = room.nightQuizState;
+  const nightActionsClosed =
+    Boolean(quiz?.endsAt && Date.now() >= quiz.endsAt) ||
+    quiz?.outcome === 'SUCCESS' ||
+    quiz?.outcome === 'FAIL';
+
   const handleSelect = async (targetId: string) => {
-    if (!role || role === 'CITIZEN' || silenced) return;
+    if (!role || role === 'CITIZEN' || silenced || nightActionsClosed) return;
     if (role === 'DOCTOR' && targetId === me.id && selfHealUsed) {
       setResult('자기 치료(자힐)는 이미 사용했습니다.');
       return;
@@ -254,17 +269,27 @@ export function NightPanel({
           ? ' · 본인 선택 시 자힐'
           : ''}
       </p>
+      <p className="mt-2 text-[11px] font-semibold leading-relaxed text-indigo-100/80">
+        {NIGHT_ACTIVITY_CLOSE_NOTICE}
+      </p>
+      {nightActionsClosed && (
+        <p className="mt-2 rounded-lg bg-amber-500/15 px-3 py-2 text-xs font-bold text-amber-100">
+          퀴즈 시간이 끝나 직업 활동이 마감되었습니다.
+        </p>
+      )}
       <div className="mt-4">
         <PlayerPickList
           players={candidates}
           selectedId={me.nightTarget}
           onSelect={(id) => void handleSelect(id)}
-          disabled={saving}
+          disabled={saving || nightActionsClosed}
           disabledIds={
             new Set([...doctorDisabledIds, ...mafiaDisabledIds])
           }
           disabledHints={{ ...doctorDisabledHints, ...mafiaDisabledHints }}
           allyBadgeIds={mafiaAllyIds}
+          viewerRole={me.role}
+          viewerPlayerId={me.id}
         />
       </div>
       {result && (
