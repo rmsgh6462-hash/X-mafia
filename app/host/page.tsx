@@ -63,7 +63,6 @@ import {
   speakPhase,
   stopAllAudio,
 } from '@/lib/game/audio';
-import { playGunshot, playMorningBirds } from '@/lib/audioManager';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import {
   advanceMorningReveal,
@@ -210,7 +209,6 @@ export default function HostPage() {
   const prevStateRef = useRef<GameState | null>(null);
   const roomIdRef = useRef<string | null>(null);
   const seenMorningSequenceRef = useRef<string | null>(null);
-  const seenMorningSoundRef = useRef<string | null>(null);
 
   const players = useMemo(() => (room ? playerList(room) : []), [room]);
   const alive = useMemo(() => (room ? alivePlayers(room) : []), [room]);
@@ -285,37 +283,6 @@ export default function HostPage() {
       return resolveNight(r);
     });
   }, [room, now]);
-
-  // 교사 화면에서도 총격→새소리 순서를 한 번만 재생해 공개 화면과 맞춘다.
-  useEffect(() => {
-    if (
-      !room ||
-      room.gameState !== 'RESULT' ||
-      typeof room.morningTransitionStartedAt !== 'number' ||
-      (room.nightResults?.deadPlayerIds ?? []).length === 0
-    ) {
-      return;
-    }
-    const key = `${room.currentRound}:${room.morningTransitionStartedAt}`;
-    if (seenMorningSoundRef.current === key) return;
-    seenMorningSoundRef.current = key;
-
-    const gunTimer = window.setTimeout(() => {
-      void playGunshot().catch(() => undefined);
-    }, 500);
-    const birdTimer = window.setTimeout(() => {
-      void playMorningBirds().catch(() => undefined);
-    }, 920);
-    return () => {
-      window.clearTimeout(gunTimer);
-      window.clearTimeout(birdTimer);
-    };
-  }, [
-    room?.gameState,
-    room?.currentRound,
-    room?.morningTransitionStartedAt,
-    room?.nightResults?.deadPlayerIds,
-  ]);
 
   // Firebase 구독 — 교사 저장 중에는 구독 스냅샷으로 직업을 덮어쓰지 않는다.
   useEffect(() => {
@@ -709,8 +676,6 @@ export default function HostPage() {
       theme={theme}
       gameState={phase}
       playerCount={phase === 'WAITING' ? playerCount : 0}
-      openingSequenceStartedAt={room?.openingSequenceStartedAt}
-      morningTransitionStartedAt={room?.morningTransitionStartedAt}
       className="min-h-screen"
     >
       <div className="flex min-h-screen flex-col text-white">
