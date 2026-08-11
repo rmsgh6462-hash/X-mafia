@@ -6,10 +6,8 @@ import {
   FileText,
   Newspaper,
   Radio,
-  Search,
 } from 'lucide-react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
-import { EventIllustration } from '@/components/play/EventIllustration';
 import { playReporterNewsSound } from '@/lib/game/audio';
 import { getCharacterStateForRole } from '@/lib/characterUtils';
 import { ROLE_LABELS } from '@/lib/game/roles';
@@ -95,32 +93,25 @@ export function NewspaperArticleModal({
             <span>긴급 발행 · 전원 공개</span>
           </div>
           <div className="mt-4 flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-[#8d2b20] sm:text-sm">
-            <Search className="h-4 w-4" />
-            기자 단독 취재
+            <FileText className="h-4 w-4" />
+            취재 대상 공개
             <FileText className="h-4 w-4" />
           </div>
 
-          <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4">
-            <div className="relative rounded-xl border-2 border-[#b79a68] bg-[#d7bd8c] p-2 text-center shadow-lg shadow-black/20">
-              <EventIllustration
-                kind="anonymous_reporter"
-                size={displayMode ? 170 : 82}
-                className="mx-auto"
-              />
-              <p className="mt-2 truncate text-[9px] font-black tracking-[0.12em] text-[#6f211b] sm:text-xs">
-                X-마피아 신문사 · 익명 취재
-              </p>
-            </div>
-            <div className="relative rounded-xl border-2 border-[#b79a68] bg-[#d7bd8c] p-2 text-center shadow-lg shadow-black/20">
+          <div className="mt-5 flex justify-center">
+            <div className="relative w-full max-w-[25rem] rounded-2xl border-2 border-[#b79a68] bg-[#d7bd8c] p-5 text-center shadow-xl shadow-black/25">
               <CharacterAvatar
                 avatarId={targetAvatarId}
                 isAlive
                 state={getCharacterStateForRole(role)}
-                size={displayMode ? 170 : 82}
+                size={displayMode ? 300 : 136}
                 className="mx-auto"
               />
-              <p className="mt-2 truncate text-[9px] font-black tracking-[0.12em] text-[#6f211b] sm:text-xs">
-                취재 대상 · {targetName}
+              <p className="mt-4 truncate text-xl font-black tracking-tight text-[#2b2017] sm:text-3xl">
+                {targetName}
+              </p>
+              <p className="mt-1 text-[10px] font-black tracking-[0.16em] text-[#6f211b] sm:text-sm">
+                취재 대상 학생
               </p>
             </div>
           </div>

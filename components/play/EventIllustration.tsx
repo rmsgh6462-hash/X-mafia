@@ -8,6 +8,7 @@ import {
 } from '@/lib/characterUtils';
 
 const LABELS: Record<EventIllustrationKind, string> = {
+  doctor_confused: '익명의 당황한 의사 기록 일러스트',
   doctor_idle: '익명의 의사 미활동 일러스트',
   doctor_fail: '익명의 의사 구조 실패 일러스트',
   reporter_idle: '익명의 기자 미활동 일러스트',
@@ -24,7 +25,8 @@ export function EventIllustration({
   className?: string;
 }) {
   const [failed, setFailed] = useState(false);
-  const isDoctor = kind === 'doctor_idle' || kind === 'doctor_fail';
+  const isDoctor =
+    kind === 'doctor_confused' || kind === 'doctor_idle' || kind === 'doctor_fail';
   const isReporter = !isDoctor;
   const Icon = isDoctor ? Stethoscope : kind === 'reporter_idle' ? Search : Newspaper;
 
@@ -57,7 +59,9 @@ export function EventIllustration({
               : 'ANONYMOUS'
             : kind === 'doctor_fail'
               ? 'MISSION FAILED'
-              : 'MEDICAL LOG'}
+              : kind === 'doctor_confused'
+                ? 'NIGHT LOG'
+                : 'MEDICAL LOG'}
         </span>
       </div>
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_26%,rgba(255,255,255,.18),transparent_42%),linear-gradient(to_top,rgba(2,6,23,.42),transparent_65%)]" />

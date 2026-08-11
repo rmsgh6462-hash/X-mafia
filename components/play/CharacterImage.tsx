@@ -54,28 +54,52 @@ export function CharacterImage({
   const [sourceIndex, setSourceIndex] = useState(0);
 
   const src = fallbackSources[sourceIndex] ?? normalSrc;
+  const {
+    className = '',
+    onLoad: callerOnLoad,
+    ...restImageProps
+  } = imageProps;
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
+    setLoaded(false);
     const resetTimer = window.setTimeout(() => setSourceIndex(0), 0);
     return () => window.clearTimeout(resetTimer);
   }, [characterId, state, requestedSrc]);
 
   return (
-    <img
-      {...imageProps}
-      src={src}
-      alt={alt}
-      onError={(event) => {
-        const nextIndex = sourceIndex + 1;
-        if (nextIndex < fallbackSources.length) {
-          setSourceIndex(nextIndex);
-          return;
-        }
+    <>
+      {!loaded && (
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-slate-800/90 animate-pulse"
+        >
+          <span className="h-1/4 w-1/4 rounded-full bg-slate-500/60" />
+          <span className="h-1/3 w-1/2 rounded-t-[45%] bg-slate-500/45" />
+        </div>
+      )}
+      <img
+        {...restImageProps}
+        src={src}
+        alt={alt}
+        className={`${className} transition-opacity duration-200 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+        onLoad={(event) => {
+          setLoaded(true);
+          callerOnLoad?.(event);
+        }}
+        onError={(event) => {
+          setLoaded(false);
+          const nextIndex = sourceIndex + 1;
+          if (nextIndex < fallbackSources.length) {
+            setSourceIndex(nextIndex);
+            return;
+          }
 
-        event.currentTarget.style.visibility = 'hidden';
-        onError?.(event);
-      }}
-    />
+          event.currentTarget.style.visibility = 'hidden';
+          onError?.(event);
+        }}
+      />
+    </>
   );
 }
 

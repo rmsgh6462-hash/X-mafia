@@ -6,6 +6,7 @@ import { LockKeyhole, Siren } from 'lucide-react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { playMafiaJailSound } from '@/lib/game/audio';
 import { getCharacterStateForRole } from '@/lib/characterUtils';
+import { ROLE_LABELS } from '@/lib/game/roles';
 import type { Role } from '@/types/game';
 
 /**
@@ -17,6 +18,7 @@ export function JailCaptureScene({
   name,
   isMafia,
   role,
+  finalRoleReveal = false,
   displayMode = false,
   playSound = true,
 }: {
@@ -24,6 +26,7 @@ export function JailCaptureScene({
   name: string;
   isMafia: boolean;
   role?: Role | null;
+  finalRoleReveal?: boolean;
   displayMode?: boolean;
   playSound?: boolean;
 }) {
@@ -115,10 +118,18 @@ export function JailCaptureScene({
 
         <div className="relative text-center lg:text-left">
           <p className={`text-sm font-black uppercase tracking-[0.32em] ${isMafia ? 'text-red-300' : 'text-sky-300'}`}>
-            {isMafia ? '긴급 경보 · 마피아 수감' : '오검 체포 · 시민 수감'}
+            {finalRoleReveal
+              ? `직업 공개 · ${role ? ROLE_LABELS[role] : '직업 공개'}`
+              : isMafia
+                ? '긴급 경보 · 마피아 수감'
+                : '오검 체포 · 시민 수감'}
           </p>
           <h2 className={`mt-5 text-balance text-4xl font-black leading-tight sm:text-6xl ${isMafia ? 'text-red-50' : 'text-sky-50'}`}>
-            {isMafia ? '지목된 변장자는... 마피아가 맞습니다!' : '안타깝게도 선량한 시민이 감옥에 갇혔습니다...'}
+            {finalRoleReveal
+              ? `그/그녀의 정체는 ${role ? ROLE_LABELS[role] : '알 수 없는 직업'}이었습니다.`
+              : isMafia
+                ? '지목된 변장자는... 마피아가 맞습니다!'
+                : '안타깝게도 선량한 시민이 감옥에 갇혔습니다...'}
           </h2>
           <motion.p
             initial={{ opacity: 0, y: 12 }}
@@ -126,9 +137,11 @@ export function JailCaptureScene({
             transition={{ delay: 0.95, duration: 0.45 }}
             className="mt-6 text-2xl font-black leading-relaxed text-white sm:text-4xl"
           >
-            {isMafia
-              ? `${name} 마피아가 감옥에 갇혔습니다!`
-              : `${name} 님은 투표로 감옥에 갇혔습니다.`}
+            {finalRoleReveal
+              ? `${name} 님의 직업 캐릭터가 공개되었습니다.`
+              : isMafia
+                ? `${name} 마피아가 감옥에 갇혔습니다!`
+                : `${name} 님은 투표로 감옥에 갇혔습니다.`}
           </motion.p>
           <p className="mt-5 inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/25 px-4 py-2 text-sm font-bold text-white/70 sm:text-base">
             <LockKeyhole className="h-4 w-4" />

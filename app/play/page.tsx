@@ -39,6 +39,7 @@ import { ROLE_LABELS } from '@/lib/game/roles';
 import {
   isAvatarId,
   playerGenderFromAvatarId,
+  preloadAvatarAssets,
   takenAvatarIds,
   type AvatarId,
 } from '@/lib/game/avatars';
@@ -156,6 +157,11 @@ function PlayPageInner() {
     setAlertOpen(true);
     setError(message);
   };
+
+  useEffect(() => {
+    if (!room || room.gameState !== 'DAY_VOTE') return;
+    preloadAvatarAssets(playerList(room).map((player) => player.avatarId));
+  }, [room?.gameState, room?.players]);
 
   useEffect(() => {
     const q = searchParams.get('pin');
@@ -607,6 +613,7 @@ function PlayPageInner() {
           accent="red"
           onClose={() => setLeaveConfirmOpen(false)}
           onConfirm={() => void handleLeaveGame()}
+          centered
           confirmLabel={leaving ? '종료 중…' : '정말 종료'}
           cancelLabel="취소"
           confirmDisabled={leaving}
@@ -905,6 +912,7 @@ function PlayPageInner() {
             : null
         }
         revealRoles={room.revealDeathRoles !== false}
+        revealStep={room.voteResultStep}
         onClose={() => setVoteDeathOpen(false)}
       />
 
@@ -937,6 +945,7 @@ function PlayPageInner() {
         accent="red"
         onClose={() => !leaving && setLeaveConfirmOpen(false)}
         onConfirm={() => void handleLeaveGame()}
+        centered
         confirmLabel={leaving ? '종료 중…' : '정말 종료'}
         cancelLabel="취소"
         confirmDisabled={leaving}
@@ -1026,7 +1035,7 @@ function VotePanel({
             type="button"
             disabled={busy || closed}
             onClick={() => void vote(p.id)}
-            className={`flex min-h-14 items-center justify-center gap-2 rounded-xl px-3 py-4 text-sm font-bold transition hover:brightness-110 disabled:opacity-40 ${
+            className={`flex min-h-16 aspect-[2.5/1] items-center justify-center gap-2 overflow-hidden rounded-xl bg-slate-900/80 px-3 py-4 text-sm font-bold transition hover:brightness-110 disabled:opacity-40 ${
               myVote === p.id
                 ? 'bg-amber-400 text-stone-900'
                 : isAlly

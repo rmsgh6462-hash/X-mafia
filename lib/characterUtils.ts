@@ -31,12 +31,14 @@ export const CHARACTER_STATES: CharacterState[] = [
 
 /** 실제 플레이어를 가리지 않고 사용할 수 있는 공통 이벤트 일러스트. */
 export type EventIllustrationKind =
+  | 'doctor_confused'
   | 'doctor_idle'
   | 'doctor_fail'
   | 'reporter_idle'
   | 'anonymous_reporter';
 
 const EVENT_ILLUSTRATION_PATHS: Record<EventIllustrationKind, string> = {
+  doctor_confused: '/images/events/doctor_confused_generic.png',
   doctor_idle: '/images/events/doctor_idle_generic.png',
   doctor_fail: '/images/events/doctor_fail_generic.png',
   reporter_idle: '/images/events/reporter_idle_generic.png',

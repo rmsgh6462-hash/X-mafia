@@ -282,6 +282,22 @@ export function getAvatarSprite(id: string | null | undefined): AvatarSprite {
   };
 }
 
+/** 투표 화면 진입 전에 스프라이트와 기본 상태 이미지를 브라우저 캐시에 올린다. */
+export function preloadAvatarAssets(ids: Array<string | null | undefined>): void {
+  if (typeof window === 'undefined') return;
+  const urls = new Set<string>();
+  ids.forEach((id) => {
+    const avatar = getAvatarDef(id);
+    urls.add(getAvatarSprite(avatar.id).src);
+    urls.add(`/images/characters/${avatar.id}/normal.png`);
+  });
+  urls.forEach((src) => {
+    const image = new window.Image();
+    image.decoding = 'async';
+    image.src = src;
+  });
+}
+
 /** 플레이어 화면에서 사용할 성별로 아바타 성별을 변환한다. */
 export function playerGenderFromAvatarId(id: string | null | undefined): 'boy' | 'girl' {
   return getAvatarDef(id).gender === 'F' ? 'girl' : 'boy';

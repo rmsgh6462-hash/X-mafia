@@ -22,6 +22,13 @@ export type GameState =
   | 'RESULT'
   | 'ENDED';
 
+/** 교사가 수동으로 진행하는 낮 투표 결과 공개 단계. */
+export type VoteResultRevealStep =
+  | 'ARREST'
+  | 'MAFIA_TEASE'
+  | 'MAFIA_RESULT'
+  | 'FULL_ROLE';
+
 /** 게임마스터가 발동하는 특수 이벤트 */
 export type GmEvent = 'HINT_BOOST' | 'SILENCE_NIGHT' | 'REVIVE_NIGHT' | null;
 
@@ -341,6 +348,8 @@ export interface GameRoom {
   /** 재투표 대상 playerId 목록 (null이면 일반 투표) */
   voteRevoteCandidates: string[] | null;
   dayVoteResult: DayVoteResult | null;
+  /** VOTE_RESULT 화면을 교사의 다음 버튼과 공유한다. */
+  voteResultStep: VoteResultRevealStep;
   createdAt: number;
   ghostChat: Record<string, GhostChatMessage>;
   /** 생존 마피아 전용 비밀 채팅 (교사는 모니터로 열람) */

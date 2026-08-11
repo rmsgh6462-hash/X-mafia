@@ -92,7 +92,7 @@ function AvatarFace({
         aria-label={showLabel ? '학생 캐릭터' : undefined}
         className={`relative shrink-0 overflow-hidden rounded-[28%] border-2 shadow-lg shadow-slate-950/20 ${
           isAlive
-            ? 'border-white/45 bg-[#fff8e8]'
+            ? 'border-white/45 bg-slate-800/90'
             : 'border-rose-300/75 bg-slate-900/80'
         }`}
         style={{

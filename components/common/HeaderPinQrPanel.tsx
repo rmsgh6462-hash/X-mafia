@@ -18,7 +18,7 @@ export function HeaderPinQrPanel({
 }) {
   const formattedPin = pin.replace(/(\d{3})(?=\d)/g, '$1 ').trim();
   const playUrl = `${joinUrl.replace(/\/$/, '')}/play?pin=${pin}`;
-  const qrSize = variant === 'display' ? 96 : 80;
+  const qrSize = variant === 'display' ? 240 : 80;
 
   const pinButtonClass =
     variant === 'display'
@@ -26,7 +26,7 @@ export function HeaderPinQrPanel({
       : 'inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-amber-400/90 px-3 py-1.5 font-mono font-black tracking-wider text-stone-900 backdrop-blur-sm transition hover:bg-amber-300';
 
   return (
-    <div className={variant === 'display' ? 'mt-2' : 'flex flex-col items-end'}>
+    <div className={variant === 'display' ? 'relative mt-2' : 'flex flex-col items-end'}>
       <button
         type="button"
         onClick={onToggle}
@@ -45,12 +45,16 @@ export function HeaderPinQrPanel({
 
       {expanded && (
         <div
-          className={`mt-2 rounded-xl bg-white p-2.5 shadow-lg ring-1 ring-white/25 ${
-            variant === 'display' ? 'w-fit' : ''
+          className={`mt-2 rounded-2xl bg-white p-4 shadow-2xl ring-1 ring-white/25 ${
+            variant === 'display'
+              ? 'absolute left-1/2 top-full z-50 mt-1 w-[min(82vw,20rem)] -translate-x-1/2'
+              : ''
           }`}
         >
-          <QRCode value={playUrl} size={qrSize} level="M" />
-          <p className="mt-1.5 max-w-[9.5rem] truncate text-[10px] font-mono text-stone-500">
+          <div className="flex justify-center">
+            <QRCode value={playUrl} size={qrSize} level="M" />
+          </div>
+          <p className="mt-2 truncate text-center text-[10px] font-mono text-stone-500">
             {playUrl}
           </p>
         </div>

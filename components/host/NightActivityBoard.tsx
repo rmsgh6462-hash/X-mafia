@@ -1,6 +1,7 @@
 'use client';
 
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
+import { EventIllustration } from '@/components/play/EventIllustration';
 import { ROLE_ACCENTS, ROLE_LABELS } from '@/lib/game/roles';
 import {
   alivePlayers,
@@ -189,16 +190,24 @@ function RoleActivityCard({
               key={actor.id}
               className="flex items-center gap-3 rounded-lg bg-black/35 px-3 py-2"
             >
-              <CharacterAvatar
-                avatarId={actor.avatarId}
-                isAlive={actor.isAlive}
-                size={40}
-                previewOnHover
-                role={actor.role}
-                viewerRole="TEACHER"
-                targetPlayerId={actor.id}
-                viewerPlayerId={null}
-              />
+              {role === 'DOCTOR' ? (
+                <EventIllustration
+                  kind="doctor_confused"
+                  size={48}
+                  className="rounded-xl"
+                />
+              ) : (
+                <CharacterAvatar
+                  avatarId={actor.avatarId}
+                  isAlive={actor.isAlive}
+                  size={40}
+                  previewOnHover
+                  role={actor.role}
+                  viewerRole="TEACHER"
+                  targetPlayerId={actor.id}
+                  viewerPlayerId={null}
+                />
+              )}
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-bold text-white">
                   {actor.name}

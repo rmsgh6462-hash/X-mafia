@@ -37,7 +37,6 @@ import { PublicMafiaKillScene } from '@/components/play/PublicMafiaKillScene';
 import { playMorningEventSound, playReporterNewsSound } from '@/lib/game/audio';
 import { ROLE_ACCENTS, ROLE_LABELS } from '@/lib/game/roles';
 import {
-  VOTE_RESULT_DURATION_MS,
   playerList,
   subscribeRoom,
 } from '@/lib/game/room';
@@ -54,8 +53,7 @@ type IdentityRevealStep =
   | 'NONE'
   | 'TEASE'
   | 'REVEAL_MAFIA_CHECK'
-  | 'REVEAL_FULL_ROLE'
-  | 'JAIL_CAPTURE';
+  | 'REVEAL_FULL_ROLE';
 
 function formatPin(pin: string) {
   return pin.replace(/(\d{3})(\d{3})/, '$1 $2');
@@ -221,11 +219,6 @@ function getTimerEnd(room: GameRoom | null): number | null {
   if (room.gameState === 'DAY_TALK') return room.talkEndsAt;
   if (room.gameState === 'DAY_MATCH') return room.matchEndsAt;
   if (room.gameState === 'DAY_VOTE') return room.voteEndsAt;
-  if (room.gameState === 'VOTE_RESULT') {
-    return room.dayVoteResult?.resolvedAt
-      ? room.dayVoteResult.resolvedAt + VOTE_RESULT_DURATION_MS
-      : null;
-  }
   if (
     room.gameState === 'NIGHT' &&
     room.nightQuizState?.active &&
@@ -741,8 +734,6 @@ function PublicVoteResult({
   avatarSize: number;
 }) {
   const result = room.dayVoteResult;
-  const [identityStep, setIdentityStep] = useState<IdentityRevealStep>('NONE');
-
   const eliminated = result?.eliminatedPlayerId
     ? room.players[result.eliminatedPlayerId]
     : null;
@@ -750,48 +741,25 @@ function PublicVoteResult({
     room.revealDeathRoles !== false && result?.eliminatedRole && eliminated,
   );
   const isMafia = result?.eliminatedRole === 'MAFIA';
+  const voteStep = room.voteResultStep ?? 'ARREST';
+  const isTease = voteStep === 'MAFIA_TEASE';
+  const isMafiaResult = voteStep === 'MAFIA_RESULT';
+  const isFullRole = voteStep === 'FULL_ROLE';
   const roleLabel =
     canRevealIdentity && result?.eliminatedRole
       ? ROLE_LABELS[result.eliminatedRole]
       : null;
 
-  useEffect(() => {
-    if (!canRevealIdentity) return;
-    if (identityStep === 'NONE') {
-      const timer = window.setTimeout(
-        () => setIdentityStep('REVEAL_MAFIA_CHECK'),
-        2600,
-      );
-      return () => window.clearTimeout(timer);
-    }
-    if (identityStep === 'REVEAL_MAFIA_CHECK') {
-      const timer = window.setTimeout(
-        () => setIdentityStep('REVEAL_FULL_ROLE'),
-        1900,
-      );
-      return () => window.clearTimeout(timer);
-    }
-    if (identityStep === 'REVEAL_FULL_ROLE') {
-      const timer = window.setTimeout(
-        () => setIdentityStep('JAIL_CAPTURE'),
-        1500,
-      );
-      return () => window.clearTimeout(timer);
-    }
-  }, [canRevealIdentity, identityStep, result?.resolvedAt]);
-
   if (!result) return null;
 
-  const isFullRole =
-    identityStep === 'REVEAL_FULL_ROLE' || identityStep === 'JAIL_CAPTURE';
-
-  if (eliminated && canRevealIdentity && identityStep === 'JAIL_CAPTURE') {
+  if (eliminated && canRevealIdentity && isFullRole) {
     return (
       <JailCaptureScene
         avatarId={eliminated.avatarId}
         name={eliminated.name}
         isMafia={isMafia}
         role={result.eliminatedRole}
+        finalRoleReveal
         displayMode
       />
     );
@@ -816,7 +784,7 @@ function PublicVoteResult({
           {eliminated ? (
             <CharacterAvatar
               avatarId={eliminated.avatarId}
-              isAlive={isFullRole}
+              isAlive
               role={result.eliminatedRole}
               revealRole={isFullRole}
               state={isFullRole && result.eliminatedRole
@@ -847,18 +815,31 @@ function PublicVoteResult({
               ? `투표 결과, ${eliminated.name} 님이 체포되어 감옥에 수감되었습니다.`
               : result.announcement ?? '이번 투표에서 체포된 학생은 없습니다.'}
           </p>
-          {canRevealIdentity && result.eliminatedRole && identityStep !== 'NONE' && (
+          {canRevealIdentity && result.eliminatedRole && voteStep !== 'ARREST' && (
             <motion.div
-              key={identityStep}
+              key={voteStep}
               initial={{ opacity: 0, y: 10, filter: 'blur(6px)' }}
               animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-              className={`mt-7 rounded-2xl px-5 py-4 ring-1 ${isMafia ? 'bg-red-950/70 text-red-100 ring-red-300/40' : 'bg-sky-950/70 text-sky-100 ring-sky-300/40'}`}
+              className={`mt-7 rounded-2xl px-5 py-4 ring-1 ${
+                isTease
+                  ? 'bg-amber-950/70 text-amber-100 ring-amber-300/40'
+                  : isMafia
+                    ? 'bg-red-950/70 text-red-100 ring-red-300/40'
+                    : 'bg-sky-950/70 text-sky-100 ring-sky-300/40'
+              }`}
             >
               <p className="text-lg font-black sm:text-2xl">
-                {isFullRole
-                  ? `${eliminated?.name ?? '학생'} 님의 정체는 ${roleLabel}였습니다.`
-                  : `${eliminated?.name ?? '학생'} 님은... 마피아가... ${isMafia ? '맞습니다!' : '아닙니다!'}`}
+                {isTease
+                  ? `${eliminated?.name ?? '학생'} 님은 마피아가...`
+                  : isMafiaResult
+                    ? `${eliminated?.name ?? '학생'} 님은 마피아가... ${isMafia ? '맞습니다!' : '아닙니다!'}`
+                    : `${eliminated?.name ?? '학생'} 님의 정체는 ${roleLabel}였습니다.`}
               </p>
+              {isMafiaResult && (
+                <p className="mt-2 text-sm font-bold text-white/70 sm:text-base">
+                  교사가 다음을 누르면 구체적인 직업이 공개됩니다.
+                </p>
+              )}
               {isFullRole && (
                 <p className="mt-2 text-sm font-bold text-white/70 sm:text-base">
                   직업 이미지 공개 · {roleLabel}
@@ -1016,7 +997,7 @@ export default function HostDisplayPage() {
     void playMorningEventSound(eventType, {
       success: currentMorningEvent.success,
     }).catch(() => {
-      // 자동 재생이 차단되어도 서브모니터의 시각 연출은 계속 진행한다.
+      // 자동 재생이 차단되어도 학생 공유 화면의 시각 연출은 계속 진행한다.
     });
   }, [currentMorningEvent, showMorningSequence, morningIdentityStep]);
 
@@ -1069,7 +1050,7 @@ export default function HostDisplayPage() {
             <div className="rounded-3xl bg-red-950/75 px-8 py-10 text-center text-lg font-black text-red-100 ring-1 ring-red-300/30 sm:px-16 sm:py-14 sm:text-2xl">
               <WifiOff className="mx-auto mb-4 h-10 w-10 text-red-200" />
               {error}
-              <p className="mt-3 text-sm font-semibold text-red-100/70">교사 화면에서 서브 모니터 창을 다시 열어 주세요.</p>
+              <p className="mt-3 text-sm font-semibold text-red-100/70">교사 화면에서 학생 공유 화면 창을 다시 열어 주세요.</p>
             </div>
           )}
           {room && <PublicStats room={room} />}
@@ -1100,7 +1081,7 @@ export default function HostDisplayPage() {
         </main>
 
         <footer className="relative z-20 px-5 pb-4 text-center text-[10px] font-bold tracking-wide text-white/45 sm:text-xs">
-          소리(나레이션·배경음)는 교사 화면에서 켜고 끌 수 있습니다. 교사 화면에서 게임을 진행하면 이 화면이 실시간으로 자동 전환됩니다.
+          소리(나레이션·배경음)는 교사 화면에서 켜고 끌 수 있습니다. 교사가 진행하면 학생 공유 화면이 실시간으로 전환됩니다.
         </footer>
       </div>
     </GameBackground>

@@ -12,6 +12,7 @@ export function Popup({
   cancelLabel = '취소',
   confirmDisabled = false,
   accent = 'amber',
+  centered = false,
 }: {
   open: boolean;
   title: string;
@@ -22,6 +23,8 @@ export function Popup({
   cancelLabel?: string;
   confirmDisabled?: boolean;
   accent?: 'amber' | 'red' | 'blue' | 'violet' | 'emerald';
+  /** 모바일에서도 화면 중앙에 배치할지 여부 */
+  centered?: boolean;
 }) {
   const accents = {
     amber: 'from-amber-500 to-orange-600',
@@ -35,7 +38,7 @@ export function Popup({
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/55 p-4 sm:items-center"
+          className={`fixed inset-0 z-50 flex justify-center bg-black/55 p-4 ${centered ? 'items-center' : 'items-end sm:items-center'}`}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

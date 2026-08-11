@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import QRCode from 'react-qr-code';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   Moon,
@@ -24,7 +23,6 @@ import {
 import GameBackground, {
   type BackgroundPhase,
 } from '@/components/GameBackground';
-import { HeaderPinQrPanel } from '@/components/common/HeaderPinQrPanel';
 import { GmPanel } from '@/components/host/GmPanel';
 import { GhostChatMonitor } from '@/components/host/GhostChatMonitor';
 import { MatchChatMonitor } from '@/components/host/MatchChatMonitor';
@@ -68,13 +66,13 @@ import {
   resolveReviveVote,
 } from '@/lib/gameLogic';
 import {
+  advanceVoteResultReveal,
   alivePlayers,
   assignMafiaMission,
   assignRolesFixedThenRandom,
   createEmptyRoom,
   deleteRoom,
   dismissDayVoteResult,
-  enterNightAfterVoteResult,
   endGameRoom,
   extendVoteTime,
   generatePin,
@@ -84,7 +82,6 @@ import {
   removePlayerFromRoom,
   requestNicknameChangeInRoom,
   resolveDayVote,
-  VOTE_RESULT_DURATION_MS,
   resolveMafiaMissionState,
   restartGameRoom,
   saveManualRoleAssignments,
@@ -156,6 +153,26 @@ const STATE_LABELS: Record<GameState, string> = {
   ENDED: '종료',
 };
 
+function voteResultNextLabel(room: GameRoom): string {
+  const hasReveal = Boolean(
+    room.revealDeathRoles !== false &&
+      room.dayVoteResult?.eliminatedPlayerId &&
+      room.dayVoteResult.eliminatedRole,
+  );
+  if (!hasReveal) return '밤으로 이동';
+  switch (room.voteResultStep ?? 'ARREST') {
+    case 'ARREST':
+      return '다음: 마피아 여부 확인';
+    case 'MAFIA_TEASE':
+      return '다음: 결과 공개';
+    case 'MAFIA_RESULT':
+      return '다음: 구체적 직업 공개';
+    case 'FULL_ROLE':
+    default:
+      return '밤으로 이동 / 낮 계속하기';
+  }
+}
+
 function formatPin(pin: string) {
   return pin.replace(/(\d{3})(\d{3})/, '$1 $2');
 }
@@ -169,13 +186,11 @@ export default function HostPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const [joinUrl, setJoinUrl] = useState('');
   const [bgmOn, setBgmOn] = useState(false);
   const [narrationOn, setNarrationOn] = useState(false);
   const [roleBoardOpen, setRoleBoardOpen] = useState(false);
   const [nightConfigOpen, setNightConfigOpen] = useState(false);
   const [mafiaMissionOpen, setMafiaMissionOpen] = useState(false);
-  const [pinQrExpanded, setPinQrExpanded] = useState(false);
   const [morningSequenceOpen, setMorningSequenceOpen] = useState(false);
   const prevStateRef = useRef<GameState | null>(null);
   const roomIdRef = useRef<string | null>(null);
@@ -209,35 +224,19 @@ export default function HostPage() {
     return Math.max(0, Math.ceil((room.voteEndsAt - now) / 1000));
   }, [room?.voteEndsAt, now]);
 
-  const voteResultRemainSec = useMemo(() => {
-    const resolvedAt = room?.dayVoteResult?.resolvedAt;
-    if (room?.gameState !== 'VOTE_RESULT' || !resolvedAt) return 0;
-    return Math.max(
-      0,
-      Math.ceil((resolvedAt + VOTE_RESULT_DURATION_MS - now) / 1000),
-    );
-  }, [room?.dayVoteResult?.resolvedAt, room?.gameState, now]);
-
   const voteTallies = useMemo(() => (room ? tallyVotes(room) : {}), [room]);
   const totalVotes = useMemo(
     () => Object.values(voteTallies).reduce((a, b) => a + b, 0),
     [voteTallies],
   );
   const voteAutoEndedRef = useRef<number | null>(null);
-  const voteResultAutoEndedRef = useRef<number | null>(null);
   const talkAutoEndedRef = useRef<number | null>(null);
-
-  // 클라이언트 join URL
-  useEffect(() => {
-    setJoinUrl(window.location.origin);
-  }, []);
 
   // 매칭·투표·토론·밤퀴즈 타이머 틱
   useEffect(() => {
     const needTick =
       (room?.gameState === 'DAY_MATCH' && room.matchEndsAt) ||
       (room?.gameState === 'DAY_VOTE' && room.voteEndsAt) ||
-      (room?.gameState === 'VOTE_RESULT' && room.dayVoteResult?.resolvedAt) ||
       (room?.gameState === 'DAY_TALK' && room.talkEndsAt) ||
       (room?.gameState === 'NIGHT' &&
         room.nightQuizState?.active &&
@@ -249,7 +248,6 @@ export default function HostPage() {
     room?.gameState,
     room?.matchEndsAt,
     room?.voteEndsAt,
-    room?.dayVoteResult?.resolvedAt,
     room?.talkEndsAt,
     room?.nightQuizState?.active,
     room?.nightQuizState?.outcome,
@@ -380,22 +378,6 @@ export default function HostPage() {
     })();
   }, [room, now, commitRoom]);
 
-  // 투표 결과 발표가 끝나면 자동으로 밤으로 이동한다. 교사는 그 전에 직접 이동할 수 있다.
-  useEffect(() => {
-    if (!room || room.gameState !== 'VOTE_RESULT') return;
-    const resolvedAt = room.dayVoteResult?.resolvedAt;
-    if (!resolvedAt || now < resolvedAt + VOTE_RESULT_DURATION_MS) return;
-    if (voteResultAutoEndedRef.current === resolvedAt) return;
-    voteResultAutoEndedRef.current = resolvedAt;
-    void runAction((current) => {
-      const next = enterNightAfterVoteResult(current);
-      if (next.gameState === 'NIGHT') {
-        speak('밤이 되었습니다. 퀴즈와 직업 활동을 시작합니다.');
-      }
-      return next;
-    });
-  }, [room, now, commitRoom]);
-
   // 토론 시간 만료 → 자동 투표
   useEffect(() => {
     if (!room || room.gameState !== 'DAY_TALK' || !room.talkEndsAt) return;
@@ -488,7 +470,7 @@ export default function HostPage() {
 
   const handleEnterNightAfterVoteResult = () => {
     void runAction((current) => {
-      const next = enterNightAfterVoteResult(current);
+      const next = advanceVoteResultReveal(current);
       if (next.gameState === 'NIGHT') {
         speak('밤이 되었습니다. 퀴즈와 직업 활동을 시작합니다.');
       }
@@ -620,10 +602,6 @@ export default function HostPage() {
     }
   };
 
-  const qrValue = room
-    ? `${joinUrl}/play?pin=${room.pin}`
-    : joinUrl;
-
   const phase = room ? toBackgroundPhase(room.gameState) : 'WAITING';
 
   return (
@@ -654,13 +632,9 @@ export default function HostPage() {
 
           <div className="flex items-center gap-2 text-sm md:text-base">
             {room && (
-              <HeaderPinQrPanel
-                pin={room.pin}
-                joinUrl={joinUrl}
-                expanded={pinQrExpanded}
-                onToggle={() => setPinQrExpanded((v) => !v)}
-                variant="host"
-              />
+              <span className="rounded-md bg-amber-400/90 px-3 py-1.5 font-mono font-black tracking-wider text-stone-900 backdrop-blur-sm">
+                PIN {formatPin(room.pin)}
+              </span>
             )}
             {room && (
               <button
@@ -672,17 +646,17 @@ export default function HostPage() {
                     'width=1920,height=1080',
                   );
                   if (!displayWindow) {
-                    setError('서브 모니터 창이 차단되었습니다. 브라우저의 팝업을 허용해 주세요.');
+                    setError('학생 공유 화면 창이 차단되었습니다. 브라우저의 팝업을 허용해 주세요.');
                     return;
                   }
                   displayWindow.focus();
                 }}
-                title="새 창을 빔프로젝터 쪽 모니터로 옮긴 뒤 F11을 누르면 전체 화면으로 볼 수 있습니다."
-                aria-label="서브 모니터 화면 열기"
+                title="새 창을 빔프로젝터 쪽으로 옮긴 뒤 F11을 누르면 학생 공유 화면으로 전체 화면을 볼 수 있습니다."
+                aria-label="학생 공유 화면 열기"
                 className="inline-flex items-center gap-1.5 rounded-md bg-sky-500/85 px-3 py-1.5 font-bold text-white shadow-lg transition hover:bg-sky-400"
               >
                 <Monitor className="h-4 w-4" />
-                <span className="hidden sm:inline">서브 모니터</span>
+                <span className="hidden sm:inline">학생 공유 화면</span>
                 <span className="sm:hidden">화면</span>
               </button>
             )}
@@ -835,13 +809,7 @@ export default function HostPage() {
                 exit={{ opacity: 0, scale: 0.98 }}
                 className="flex w-full max-w-5xl flex-col items-center"
               >
-                <div className="flex w-full flex-col items-center gap-8 md:flex-row md:items-stretch md:justify-center md:gap-14">
-                  <div className="flex flex-col items-center justify-center rounded-2xl bg-white p-5 shadow-2xl shadow-black/40">
-                    <QRCode value={qrValue} size={220} level="M" />
-                    <p className="mt-3 text-xs font-medium text-stone-500">
-                      학생 기기에서 스캔
-                    </p>
-                  </div>
+                <div className="flex w-full justify-center">
                   <div className="flex flex-col items-center justify-center text-center">
                     <p className="text-sm font-semibold uppercase tracking-[0.25em] text-white/70">
                       PIN CODE
@@ -997,13 +965,13 @@ export default function HostPage() {
               <StagePanel key="vote-result" title="투표 결과 발표">
                 <div className="mx-auto max-w-2xl rounded-2xl bg-red-950/45 p-6 text-center ring-1 ring-red-300/25">
                   <p className="text-xs font-black uppercase tracking-[0.24em] text-amber-200/80">
-                    투표 결과 · 서브모니터 연출 중
+                    투표 결과 · 학생 공유 화면 연출 중
                   </p>
                   <p className="mt-4 text-2xl font-black text-white md:text-4xl">
                     {room.dayVoteResult?.announcement ?? '이번 투표에서 탈락자는 없습니다.'}
                   </p>
                   <p className="mt-4 text-sm font-bold text-white/60">
-                    서브모니터에 체포 연출을 공개한 뒤 밤으로 이동합니다. 자동 전환까지 {voteResultRemainSec}초
+                    학생 공유 화면 연출은 교사가 [다음] 버튼을 눌러 한 단계씩 진행합니다.
                   </p>
                 </div>
                 <button
@@ -1013,7 +981,7 @@ export default function HostPage() {
                   className="mt-8 inline-flex items-center gap-2 rounded-xl bg-indigo-500 px-6 py-3 text-base font-black text-white shadow-lg shadow-indigo-950/40 hover:bg-indigo-400 disabled:opacity-50"
                 >
                   <Moon className="h-5 w-5" />
-                  밤으로 이동
+                  {voteResultNextLabel(room)}
                 </button>
               </StagePanel>
             ) : room.gameState === 'NIGHT' ? (
@@ -1325,7 +1293,7 @@ export default function HostPage() {
               {room?.gameState === 'VOTE_RESULT' && (
                 <ControlBtn
                   icon={<Moon className="h-4 w-4" />}
-                  label={`밤으로 이동${voteResultRemainSec > 0 ? ` · ${voteResultRemainSec}초` : ''}`}
+                  label={voteResultNextLabel(room)}
                   disabled={busy}
                   onClick={handleEnterNightAfterVoteResult}
                   accent="night"
@@ -1986,7 +1954,7 @@ function MorningResultStage({
             {revealTotal > 0 && (
               <div className="rounded-2xl bg-amber-400/10 px-4 py-4 ring-1 ring-amber-300/25">
                 <p className="text-xs font-black uppercase tracking-wider text-amber-200/80">
-                  서브모니터 · 아침 공개
+                  학생 공유 화면 · 아침 공개
                 </p>
                 <p className="mt-1 text-base font-black text-white">
                   {revealStepLabel ?? '공개'} ({revealIndex + 1}/{revealTotal})

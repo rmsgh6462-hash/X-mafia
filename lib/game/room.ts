@@ -49,6 +49,7 @@ import type {
   Player,
   Role,
   Theme,
+  VoteResultRevealStep,
   WinnerSide,
 } from '@/types/game';
 
@@ -88,6 +89,7 @@ export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
     victoryTeam: null,
     voteRevoteCandidates: null,
     dayVoteResult: null,
+    voteResultStep: 'ARREST',
     createdAt: Date.now(),
     ghostChat: {},
     mafiaChat: {},
@@ -369,6 +371,7 @@ export function normalizeGameRoom(room: GameRoom): GameRoom {
     victoryTeam: room.victoryTeam ?? room.winnerSide ?? null,
     voteRevoteCandidates: room.voteRevoteCandidates ?? null,
     dayVoteResult: room.dayVoteResult ?? null,
+    voteResultStep: normalizeVoteResultStep(room.voteResultStep),
     ghostChat: room.ghostChat ?? {},
     mafiaChat: room.mafiaChat ?? {},
     matchChats: room.matchChats ?? {},
@@ -413,6 +416,15 @@ function normalizeMorningIdentityStep(
     return raw;
   }
   return 'NONE';
+}
+
+function normalizeVoteResultStep(
+  raw: GameRoom['voteResultStep'] | null | undefined,
+): VoteResultRevealStep {
+  if (raw === 'MAFIA_TEASE' || raw === 'MAFIA_RESULT' || raw === 'FULL_ROLE') {
+    return raw;
+  }
+  return 'ARREST';
 }
 
 function normalizeRoleCountConfig(
@@ -1272,6 +1284,7 @@ export function startVotePhase(room: GameRoom): GameRoom {
     voteEndsAt: Date.now() + VOTE_DURATION_MS,
     voteRevoteCandidates: null,
     dayVoteResult: null,
+    voteResultStep: 'ARREST',
   };
 }
 
@@ -1427,6 +1440,7 @@ export function resolveDayVote(room: GameRoom): GameRoom {
       ballots: { ...(room.votes ?? {}) },
       resolvedAt: Date.now(),
     },
+    voteResultStep: 'ARREST',
   };
 
   const mms = next.mafiaMissionState;
@@ -1508,6 +1522,34 @@ export function enterNightAfterVoteResult(
 ): GameRoom {
   if (room.gameState !== 'VOTE_RESULT') return room;
   return startNightPhase(room, quizConfig ?? resolveNightQuizConfig(room));
+}
+
+/** 교사의 [다음] 버튼으로 투표 결과 공개 단계를 한 칸 진행한다. */
+export function advanceVoteResultReveal(
+  room: GameRoom,
+  quizConfig?: NightQuizConfig,
+): GameRoom {
+  if (room.gameState !== 'VOTE_RESULT') return room;
+
+  const result = room.dayVoteResult;
+  const canReveal = Boolean(
+    room.revealDeathRoles !== false &&
+      result?.eliminatedPlayerId &&
+      result.eliminatedRole,
+  );
+  if (!canReveal) return enterNightAfterVoteResult(room, quizConfig);
+
+  switch (normalizeVoteResultStep(room.voteResultStep)) {
+    case 'ARREST':
+      return { ...room, voteResultStep: 'MAFIA_TEASE' };
+    case 'MAFIA_TEASE':
+      return { ...room, voteResultStep: 'MAFIA_RESULT' };
+    case 'MAFIA_RESULT':
+      return { ...room, voteResultStep: 'FULL_ROLE' };
+    case 'FULL_ROLE':
+    default:
+      return enterNightAfterVoteResult(room, quizConfig);
+  }
 }
 
 export function dismissDayVoteResult(room: GameRoom): GameRoom {
