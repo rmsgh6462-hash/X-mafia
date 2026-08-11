@@ -48,6 +48,12 @@ import {
 import { PlayerRoster } from '@/components/play/PlayerRoster';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { isFirebaseConfigured } from '@/lib/firebase';
+import {
+  defaultHostAccessConfig,
+  loadHostAccessConfig,
+  verifyHostCreatePassword,
+  type HostAccessConfig,
+} from '@/lib/game/adminConfig';
 import { firstFreeAvatarId, playerGenderFromAvatarId } from '@/lib/game/avatars';
 import {
   playPhaseBgm,
@@ -57,6 +63,7 @@ import {
   speakPhase,
   stopAllAudio,
 } from '@/lib/game/audio';
+import { playGunshot, playMorningBirds } from '@/lib/audioManager';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import {
   advanceMorningReveal,
@@ -192,9 +199,18 @@ export default function HostPage() {
   const [nightConfigOpen, setNightConfigOpen] = useState(false);
   const [mafiaMissionOpen, setMafiaMissionOpen] = useState(false);
   const [morningSequenceOpen, setMorningSequenceOpen] = useState(false);
+  const [hostAccess, setHostAccess] = useState<HostAccessConfig>(
+    defaultHostAccessConfig(),
+  );
+  const [createPasswordOpen, setCreatePasswordOpen] = useState(false);
+  const [createPasswordInput, setCreatePasswordInput] = useState('');
+  const [createPasswordError, setCreatePasswordError] = useState<string | null>(
+    null,
+  );
   const prevStateRef = useRef<GameState | null>(null);
   const roomIdRef = useRef<string | null>(null);
   const seenMorningSequenceRef = useRef<string | null>(null);
+  const seenMorningSoundRef = useRef<string | null>(null);
 
   const players = useMemo(() => (room ? playerList(room) : []), [room]);
   const alive = useMemo(() => (room ? alivePlayers(room) : []), [room]);
@@ -269,6 +285,37 @@ export default function HostPage() {
       return resolveNight(r);
     });
   }, [room, now]);
+
+  // 교사 화면에서도 총격→새소리 순서를 한 번만 재생해 공개 화면과 맞춘다.
+  useEffect(() => {
+    if (
+      !room ||
+      room.gameState !== 'RESULT' ||
+      typeof room.morningTransitionStartedAt !== 'number' ||
+      (room.nightResults?.deadPlayerIds ?? []).length === 0
+    ) {
+      return;
+    }
+    const key = `${room.currentRound}:${room.morningTransitionStartedAt}`;
+    if (seenMorningSoundRef.current === key) return;
+    seenMorningSoundRef.current = key;
+
+    const gunTimer = window.setTimeout(() => {
+      void playGunshot().catch(() => undefined);
+    }, 500);
+    const birdTimer = window.setTimeout(() => {
+      void playMorningBirds().catch(() => undefined);
+    }, 920);
+    return () => {
+      window.clearTimeout(gunTimer);
+      window.clearTimeout(birdTimer);
+    };
+  }, [
+    room?.gameState,
+    room?.currentRound,
+    room?.morningTransitionStartedAt,
+    room?.nightResults?.deadPlayerIds,
+  ]);
 
   // Firebase 구독 — 교사 저장 중에는 구독 스냅샷으로 직업을 덮어쓰지 않는다.
   useEffect(() => {
@@ -414,7 +461,22 @@ export default function HostPage() {
     }
   }, [narrationOn]);
 
-  const handleCreateRoom = async () => {
+  useEffect(() => {
+    if (!isFirebaseConfigured()) return;
+    let cancelled = false;
+    void loadHostAccessConfig()
+      .then((config) => {
+        if (!cancelled) setHostAccess(config);
+      })
+      .catch(() => {
+        /* 설정 로드 실패 시 기본값(비밀번호 없음) 유지 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const createRoomNow = async () => {
     if (!isFirebaseConfigured()) {
       setError(
         'Firebase가 설정되지 않았습니다. .env.local에 실제 Firebase 설정을 넣은 뒤 다시 시도하세요.',
@@ -433,10 +495,48 @@ export default function HostPage() {
       await setBgmEnabled(true, 'WAITING');
       await setNarrationEnabled(true);
       speakPhase('WAITING');
+      setCreatePasswordOpen(false);
+      setCreatePasswordInput('');
+      setCreatePasswordError(null);
     } finally {
       hostWriteLockRef.current = false;
       setBusy(false);
     }
+  };
+
+  const handleCreateRoom = async () => {
+    if (!isFirebaseConfigured()) {
+      setError(
+        'Firebase가 설정되지 않았습니다. .env.local에 실제 Firebase 설정을 넣은 뒤 다시 시도하세요.',
+      );
+      return;
+    }
+
+    let config = hostAccess;
+    try {
+      config = await loadHostAccessConfig();
+      setHostAccess(config);
+    } catch {
+      /* 최신 설정을 못 읽으면 캐시된 값으로 진행 */
+    }
+
+    if (config.passwordRequired) {
+      setCreatePasswordInput('');
+      setCreatePasswordError(null);
+      setCreatePasswordOpen(true);
+      return;
+    }
+
+    await createRoomNow();
+  };
+
+  const handleConfirmCreatePassword = async () => {
+    if (!verifyHostCreatePassword(hostAccess, createPasswordInput)) {
+      setCreatePasswordError('비밀번호가 올바르지 않습니다.');
+      return;
+    }
+    setCreatePasswordError(null);
+    await createRoomNow();
   };
 
   const runAction = (factory: (r: GameRoom) => GameRoom, minPlayers = 0) => {
@@ -609,6 +709,8 @@ export default function HostPage() {
       theme={theme}
       gameState={phase}
       playerCount={phase === 'WAITING' ? playerCount : 0}
+      openingSequenceStartedAt={room?.openingSequenceStartedAt}
+      morningTransitionStartedAt={room?.morningTransitionStartedAt}
       className="min-h-screen"
     >
       <div className="flex min-h-screen flex-col text-white">
@@ -800,6 +902,11 @@ export default function HostPage() {
                     방 생성
                   </span>
                 </button>
+                {hostAccess.passwordRequired && (
+                  <p className="text-xs font-semibold text-white/45">
+                    관리자가 방 생성 비밀번호를 설정해 두었습니다.
+                  </p>
+                )}
               </motion.div>
             ) : room.gameState === 'WAITING' ? (
               <motion.div
@@ -1464,6 +1571,79 @@ export default function HostPage() {
             controlledIdentityStep={room.morningIdentityStep ?? 'NONE'}
             onClose={() => setMorningSequenceOpen(false)}
           />
+        )}
+
+        {createPasswordOpen && (
+          <div
+            className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+            onClick={() => {
+              if (busy) return;
+              setCreatePasswordOpen(false);
+              setCreatePasswordError(null);
+            }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="create-room-password-title"
+              className="w-full max-w-sm rounded-2xl border border-white/15 bg-stone-950 p-5 text-white shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2
+                id="create-room-password-title"
+                className="text-lg font-black text-amber-200"
+              >
+                방 생성 비밀번호
+              </h2>
+              <p className="mt-1 text-sm text-white/55">
+                관리자가 설정한 비밀번호를 입력한 뒤 방을 만듭니다.
+              </p>
+              <input
+                type="password"
+                value={createPasswordInput}
+                onChange={(e) => {
+                  setCreatePasswordInput(e.target.value);
+                  setCreatePasswordError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void handleConfirmCreatePassword();
+                  }
+                }}
+                autoFocus
+                autoComplete="current-password"
+                placeholder="비밀번호"
+                className="mt-4 w-full rounded-xl border border-white/15 bg-black/40 px-4 py-3 text-sm font-semibold outline-none focus:border-amber-400/50 focus:ring-2 focus:ring-amber-400/30"
+              />
+              {createPasswordError && (
+                <p className="mt-2 text-sm font-semibold text-red-300">
+                  {createPasswordError}
+                </p>
+              )}
+              <div className="mt-4 flex gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setCreatePasswordOpen(false);
+                    setCreatePasswordError(null);
+                  }}
+                  className="flex-1 rounded-xl bg-white/10 py-2.5 text-sm font-bold text-white hover:bg-white/15 disabled:opacity-50"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || !createPasswordInput.trim()}
+                  onClick={() => void handleConfirmCreatePassword()}
+                  className="flex-1 rounded-xl bg-amber-400 py-2.5 text-sm font-black text-stone-900 hover:bg-amber-300 disabled:opacity-50"
+                >
+                  {busy ? '생성 중…' : '확인'}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
       </div>
