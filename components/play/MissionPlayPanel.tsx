@@ -14,6 +14,14 @@ import {
 import type { GameRoom, Player } from '@/types/game';
 
 type NightTab = 'quiz' | 'ability';
+type QuizAnswerStatus = 'correct' | 'incorrect' | 'unanswered';
+
+function getQuizAnswerStatus(
+  submission: { answer: string; correct: boolean } | null | undefined,
+): QuizAnswerStatus {
+  if (!submission || submission.answer === '(시간초과)') return 'unanswered';
+  return submission.correct ? 'correct' : 'incorrect';
+}
 
 /** 밤: 퀴즈 + 특수능력 탭 */
 export function NightSessionPanel({
@@ -130,6 +138,7 @@ export function NightQuizPlayPanel({
   const peerId = quiz?.peerMap?.[me.id];
   const peer = peerId ? room.players[peerId] : null;
   const peerSub = peerId ? quiz?.submissions?.[peerId] : null;
+  const myQuizStatus = getQuizAnswerStatus(submission);
 
   const remainSec = quiz?.endsAt
     ? Math.max(0, Math.ceil((quiz.endsAt - now) / 1000))
@@ -267,7 +276,7 @@ export function NightQuizPlayPanel({
           avatarId={me.avatarId}
           label="나"
           status={
-            submission ? (submission.correct ? 'success' : 'fail') : 'pending'
+            getQuizAnswerStatus(submission)
           }
         />
         <MiniStatus
@@ -275,7 +284,7 @@ export function NightQuizPlayPanel({
           avatarId={peer?.avatarId}
           label="다른 학생"
           status={
-            peerSub ? (peerSub.correct ? 'success' : 'fail') : 'pending'
+            getQuizAnswerStatus(peerSub)
           }
         />
       </div>
@@ -326,19 +335,25 @@ export function NightQuizPlayPanel({
       ) : submission ? (
         <p
           className={`rounded-xl px-3 py-3 text-center text-sm font-bold ${
-            submission.correct
+            myQuizStatus === 'correct'
               ? 'bg-emerald-500/20 text-emerald-200'
-              : 'bg-red-500/20 text-red-200'
+              : myQuizStatus === 'incorrect'
+                ? 'bg-red-500/20 text-red-200'
+                : 'bg-amber-500/20 text-amber-100'
           }`}
         >
-          {submission.correct ? '정답!' : '오답'}
-          {submission.answer === '(시간초과)' ? ' (시간초과)' : ''}
+          {myQuizStatus === 'correct'
+            ? '정답'
+            : myQuizStatus === 'incorrect'
+              ? '오답'
+              : '미응답'}
+          {myQuizStatus === 'unanswered' ? ' (시간 초과)' : ''}
         </p>
       ) : timedOut ? (
         <p className="rounded-xl bg-amber-500/20 px-3 py-3 text-center text-sm font-bold text-amber-100">
           {answer.trim()
             ? '시간 종료 — 선택한 답안을 자동 제출합니다…'
-            : '시간 초과 — 오답 처리됩니다'}
+            : '시간 초과 — 미응답 처리됩니다'}
         </p>
       ) : null}
     </section>
@@ -354,21 +369,25 @@ function MiniStatus({
   name: string;
   avatarId?: string;
   label: string;
-  status: 'pending' | 'success' | 'fail';
+  status: QuizAnswerStatus;
 }) {
   const tone =
-    status === 'success'
+    status === 'correct'
       ? 'ring-emerald-400/40 bg-emerald-950/40'
-      : status === 'fail'
+      : status === 'incorrect'
         ? 'ring-red-400/40 bg-red-950/40'
-        : 'ring-white/10 bg-white/5';
+        : 'ring-amber-300/35 bg-amber-950/30';
   return (
     <div className={`rounded-xl p-3 text-center ring-1 ${tone}`}>
       <p className="mb-1 text-[10px] font-bold text-white/40">{label}</p>
       <CharacterAvatar avatarId={avatarId} size={40} className="mx-auto" />
       <p className="mt-1 truncate text-xs font-bold">{name}</p>
       <p className="text-[11px] text-white/60">
-        {status === 'success' ? '성공' : status === 'fail' ? '실패' : '대기'}
+        {status === 'correct'
+          ? '정답'
+          : status === 'incorrect'
+            ? '오답'
+            : '미응답'}
       </p>
     </div>
   );

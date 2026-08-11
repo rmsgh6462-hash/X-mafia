@@ -5,6 +5,7 @@
 | `bgm-day.wav` | 낮·대기 메인 BGM (멜로디·패드) |
 | `bgm-night.wav` | 밤 메인 BGM (으스스한 마이너) |
 | `env-birds.wav` | 낮 환경음 — 새소리 |
+| `morning-birds.wav` | 총격 직후 아침 전환용 짧은 새소리 |
 | `env-stream.wav` | 낮 환경음 — 시냇물 |
 | `env-crow.wav` | 밤 환경음 — 까마귀 |
 | `env-rain.wav` | 밤 환경음 — 비 (30% 확률 오버레이) |

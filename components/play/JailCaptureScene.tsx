@@ -5,9 +5,9 @@ import { motion } from 'framer-motion';
 import { LockKeyhole, Siren } from 'lucide-react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { playMafiaJailSound } from '@/lib/game/audio';
-import { getCharacterStateForRole } from '@/lib/characterUtils';
+import { getCharacterPronoun, getCharacterStateForRole } from '@/lib/characterUtils';
 import { ROLE_LABELS } from '@/lib/game/roles';
-import type { Role } from '@/types/game';
+import type { PlayerGender, Role } from '@/types/game';
 
 /**
  * 투표 체포 뒤 정체 공개가 허용된 경우에만 사용하는 공개 수감 장면.
@@ -18,6 +18,7 @@ export function JailCaptureScene({
   name,
   isMafia,
   role,
+  gender,
   finalRoleReveal = false,
   displayMode = false,
   playSound = true,
@@ -26,6 +27,7 @@ export function JailCaptureScene({
   name: string;
   isMafia: boolean;
   role?: Role | null;
+  gender?: PlayerGender | null;
   finalRoleReveal?: boolean;
   displayMode?: boolean;
   playSound?: boolean;
@@ -38,6 +40,7 @@ export function JailCaptureScene({
   }, [isMafia, playSound]);
 
   const imageSize = displayMode ? 440 : 188;
+  const pronoun = getCharacterPronoun(gender);
   const shellClass = displayMode
     ? 'min-h-[70vh] w-full max-w-7xl rounded-[2rem] p-6 sm:p-10'
     : 'w-full rounded-2xl p-4';
@@ -126,7 +129,7 @@ export function JailCaptureScene({
           </p>
           <h2 className={`mt-5 text-balance text-4xl font-black leading-tight sm:text-6xl ${isMafia ? 'text-red-50' : 'text-sky-50'}`}>
             {finalRoleReveal
-              ? `그/그녀의 정체는 ${role ? ROLE_LABELS[role] : '알 수 없는 직업'}이었습니다.`
+              ? `${pronoun}의 정체는 ${role ? ROLE_LABELS[role] : '알 수 없는 직업'}이었습니다.`
               : isMafia
                 ? '지목된 변장자는... 마피아가 맞습니다!'
                 : '안타깝게도 선량한 시민이 감옥에 갇혔습니다...'}

@@ -12,12 +12,14 @@ export function PublicMafiaKillScene({
   avatarSize,
   wasKilled,
   targetKey,
+  deathMessage,
 }: {
   targetName: string;
   avatarId?: string | null;
   avatarSize: number;
   wasKilled: boolean;
   targetKey: string | null;
+  deathMessage?: string | null;
 }) {
   const { impactReady, showWhiteFlash } = useMafiaKillReveal(wasKilled, targetKey);
   const showDeadVisual = wasKilled && impactReady;
@@ -74,7 +76,7 @@ export function PublicMafiaKillScene({
           </div>
           <h1 className="mt-6 text-balance text-4xl font-black leading-tight text-red-50 sm:text-6xl">
             {showDeadVisual
-              ? `${targetName} 님이 탈락했습니다`
+              ? deathMessage ?? `${targetName} 님이 탈락했습니다`
               : wasKilled
                 ? '마피아의 공격이 감지되었습니다…'
                 : '마피아의 공격이 감지되었습니다'}

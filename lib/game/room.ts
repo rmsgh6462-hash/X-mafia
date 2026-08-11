@@ -60,6 +60,8 @@ export function createEmptyRoom(theme: Theme, pin: string): GameRoom {
     gameState: 'WAITING',
     theme,
     players: {},
+    openingSequenceStartedAt: null,
+    morningTransitionStartedAt: null,
     nightQuizState: null,
     pendingNightQuizConfig: null,
     mafiaMissionState: emptyMafiaMissionState(),
@@ -340,6 +342,14 @@ export function normalizeGameRoom(room: GameRoom): GameRoom {
     // 기존 방 데이터의 테마도 새 정책에 맞춰 마을로 통일한다.
     theme: 'VILLAGE',
     players,
+    openingSequenceStartedAt:
+      typeof room.openingSequenceStartedAt === 'number'
+        ? room.openingSequenceStartedAt
+        : null,
+    morningTransitionStartedAt:
+      typeof room.morningTransitionStartedAt === 'number'
+        ? room.morningTransitionStartedAt
+        : null,
     nightQuizState: normalizeNightQuizState(room.nightQuizState),
     pendingNightQuizConfig: normalizePendingNightQuizConfig(
       room.pendingNightQuizConfig,
@@ -819,6 +829,8 @@ export function startAssignedGame(room: GameRoom): GameRoom {
     players: nextPlayers,
     pendingRoleAssignments: null,
     gameState: 'DAY_TALK',
+    openingSequenceStartedAt: Date.now(),
+    morningTransitionStartedAt: null,
     votes: {},
     matchEndsAt: null,
     voteEndsAt: null,
@@ -904,6 +916,8 @@ function startGameWithRoles(room: GameRoom, deck: Role[]): GameRoom {
     players: nextPlayers,
     pendingRoleAssignments: null,
     gameState: 'DAY_TALK',
+    openingSequenceStartedAt: Date.now(),
+    morningTransitionStartedAt: null,
     votes: {},
     matchEndsAt: null,
     voteEndsAt: null,
@@ -1348,11 +1362,16 @@ export function buildNightDeathAnnouncement(
   name: string,
   role: Role | null,
   reveal: boolean,
+  mafiaFriendlyFire = false,
 ): string {
   if (!reveal || !role) {
     return `지난밤 ${name} 님이 마피아에게 습격당했습니다.`;
   }
-  return `지난밤 ${name} 님이 마피아에게 습격당했습니다. ${name} 님의 직업은 ${ROLE_LABELS[role]}이었습니다.`;
+  if (role === 'MAFIA' && mafiaFriendlyFire) {
+    return `${name} 님: 마피아가 동료 마피아를 공격했습니다.`;
+  }
+  const particle = role === 'POLICE' ? '이' : '가';
+  return `${name} 님: 선량한 ${ROLE_LABELS[role]}${particle} 공격당했습니다.`;
 }
 
 export function extendVoteTime(
@@ -1579,6 +1598,7 @@ export function startNightPhase(
     ...room,
     players: cleared,
     gameState: 'NIGHT',
+    morningTransitionStartedAt: null,
     votes: {},
     matchEndsAt: null,
     voteEndsAt: null,

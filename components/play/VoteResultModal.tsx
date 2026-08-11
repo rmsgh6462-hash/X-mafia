@@ -28,6 +28,9 @@ export function VoteResultModal({
   const isTease = revealStep === 'MAFIA_TEASE';
   const isMafiaResult = revealStep === 'MAFIA_RESULT';
   const isFullRole = revealRoles && revealStep === 'FULL_ROLE';
+  const revealActualRole = Boolean(
+    revealRoles && (isMafiaResult || isFullRole) && result?.eliminatedRole,
+  );
   const isMafia = result?.eliminatedRole === 'MAFIA';
 
   return (
@@ -44,6 +47,7 @@ export function VoteResultModal({
           isMafia={isMafia}
           role={result?.eliminatedRole}
           finalRoleReveal
+          gender={eliminatedPlayer.gender}
         />
       ) : (
       <div className="relative overflow-hidden rounded-2xl border border-amber-200/20 bg-[#100b18] p-3 shadow-inner shadow-black/40">
@@ -55,12 +59,12 @@ export function VoteResultModal({
               <CharacterAvatar
                 avatarId={eliminatedPlayer.avatarId}
                 isAlive
-                role={revealRoles ? result?.eliminatedRole : null}
-                revealRole={isFullRole}
+                role={revealActualRole ? result?.eliminatedRole : null}
+                revealRole={revealActualRole}
                 state={
-                  isFullRole && result?.eliminatedRole
+                  revealActualRole && result?.eliminatedRole
                     ? getCharacterStateForRole(result.eliminatedRole)
-                    : 'arrested'
+                    : 'normal'
                 }
                 size={72}
               />

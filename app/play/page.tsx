@@ -4,13 +4,17 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
+  BookOpen,
   LogIn,
   Moon,
+  MoonStar,
   Power,
+  ScrollText,
   Sun,
   Vote,
 } from 'lucide-react';
 import GameBackground, {
+  OPENING_SEQUENCE_DURATION_MS,
   type BackgroundPhase,
 } from '@/components/GameBackground';
 import { AvatarPickerGrid } from '@/components/play/AvatarPicker';
@@ -59,7 +63,7 @@ import {
   type PlaySession,
 } from '@/lib/game/room';
 import { getMafiaAllies } from '@/lib/game/visibility';
-import type { GameRoom, GameState, Player, Theme } from '@/types/game';
+import type { GameRoom, GameState, Player, Role, Theme } from '@/types/game';
 
 const STATE_LABELS: Record<GameState, string> = {
   WAITING: '대기 중',
@@ -72,6 +76,14 @@ const STATE_LABELS: Record<GameState, string> = {
   RESULT: '결과',
   ENDED: '종료',
 };
+
+const NIGHT_PREVIEW_ROLES: Role[] = [
+  'MAFIA',
+  'DOCTOR',
+  'REPORTER',
+  'POLICE',
+  'SPIRITUALIST',
+];
 
 function toBackgroundPhase(state: GameState | null | undefined): BackgroundPhase {
   if (!state || state === 'WAITING') return 'WAITING';
@@ -87,12 +99,16 @@ function PlayShell({
   phase = 'WAITING',
   playerCount = 0,
   panel = 'day',
+  openingSequenceStartedAt = null,
+  morningTransitionStartedAt = null,
 }: {
   children: React.ReactNode;
   theme?: Theme;
   phase?: BackgroundPhase;
   playerCount?: number;
   panel?: 'join' | 'day' | 'night' | 'ghost';
+  openingSequenceStartedAt?: number | null;
+  morningTransitionStartedAt?: number | null;
 }) {
   const panels = {
     join: 'bg-stone-950/72',
@@ -106,6 +122,9 @@ function PlayShell({
       theme={theme}
       gameState={phase}
       playerCount={phase === 'WAITING' ? Math.min(playerCount, 10) : 0}
+      sceneCast
+      openingSequenceStartedAt={openingSequenceStartedAt}
+      morningTransitionStartedAt={morningTransitionStartedAt}
       className="min-h-dvh"
     >
       <div className="flex min-h-dvh items-stretch justify-center px-3 py-4 sm:items-center sm:px-6 sm:py-8">
@@ -138,6 +157,7 @@ function PlayPageInner() {
   const [voteDeathOpen, setVoteDeathOpen] = useState(false);
   const [morningResultOpen, setMorningResultOpen] = useState(false);
   const [roleRevealOpen, setRoleRevealOpen] = useState(false);
+  const [nightPreviewOpen, setNightPreviewOpen] = useState(false);
   const [roleRevealComplete, setRoleRevealComplete] = useState(false);
   const [alertOpen, setAlertOpen] = useState(false);
   const [alertTitle, setAlertTitle] = useState('입장 실패');
@@ -150,6 +170,7 @@ function PlayPageInner() {
   const seenMorningResultRef = useRef<string | null>(null);
   const seenRoleRevealRef = useRef<string | null>(null);
   const joinGuardRef = useRef(false);
+  const [openingTransitionActive, setOpeningTransitionActive] = useState(false);
 
   const showAlert = (title: string, message: string) => {
     setAlertTitle(title);
@@ -379,6 +400,28 @@ function PlayPageInner() {
     morningActiveEvents,
   ]);
 
+  // 게임 시작 직후 해질녘→밤→아침 연출이 끝난 뒤에만 직업 카드를 공개한다.
+  useEffect(() => {
+    const startedAt = room?.openingSequenceStartedAt;
+    if (typeof startedAt !== 'number') {
+      setOpeningTransitionActive(false);
+      return;
+    }
+
+    const remaining = startedAt + OPENING_SEQUENCE_DURATION_MS - Date.now();
+    if (remaining <= 0) {
+      setOpeningTransitionActive(false);
+      return;
+    }
+
+    setOpeningTransitionActive(true);
+    const timer = window.setTimeout(
+      () => setOpeningTransitionActive(false),
+      remaining,
+    );
+    return () => window.clearTimeout(timer);
+  }, [room?.openingSequenceStartedAt]);
+
   // 게임이 시작되어 역할이 처음 배정된 순간, 학생별 역할 공개 연출을 한 번만 보여 준다.
   useEffect(() => {
     if (!room || !me || room.gameState === 'WAITING' || !me.role) {
@@ -392,6 +435,7 @@ function PlayPageInner() {
       }
       return;
     }
+    if (openingTransitionActive) return;
 
     const key = `${room.roomId}:${me.id}:${me.role}`;
     if (seenRoleRevealRef.current === key) return;
@@ -402,7 +446,13 @@ function PlayPageInner() {
       setRoleRevealOpen(true);
     }, 250);
     return () => window.clearTimeout(revealTimer);
-  }, [room?.gameState, room?.roomId, me?.id, me?.role]);
+  }, [
+    room?.gameState,
+    room?.roomId,
+    me?.id,
+    me?.role,
+    openingTransitionActive,
+  ]);
 
   const handleJoin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -634,6 +684,22 @@ function PlayPageInner() {
   const aliveCount = alivePlayers(room).length;
   const totalCount = playerList(room).length;
   const bgPhase = toBackgroundPhase(room.gameState);
+  const nightQuizPreviewAvailable = Boolean(
+    me.role &&
+      room.pendingNightQuizConfig &&
+      room.nightQuizPreviewByRole?.[me.role],
+  );
+  const mafiaMissionPreviewAvailable = Boolean(
+    me.role === 'MAFIA' &&
+      room.mafiaMissionState?.active &&
+      room.mafiaMissionState.description?.trim(),
+  );
+  const canOpenNightPreview = Boolean(
+    me.isAlive &&
+      me.role &&
+      NIGHT_PREVIEW_ROLES.includes(me.role) &&
+      (nightQuizPreviewAvailable || mafiaMissionPreviewAvailable),
+  );
 
   return (
     <PlayShell
@@ -641,6 +707,8 @@ function PlayPageInner() {
       phase={bgPhase}
       playerCount={totalCount}
       panel={shellPanel}
+      openingSequenceStartedAt={room.openingSequenceStartedAt}
+      morningTransitionStartedAt={room.morningTransitionStartedAt}
     >
       <header className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -663,6 +731,18 @@ function PlayPageInner() {
           </div>
         </div>
         <div className="text-right">
+          {canOpenNightPreview && (
+            <button
+              type="button"
+              onClick={() => setNightPreviewOpen(true)}
+              className="mb-2 inline-flex items-center gap-1.5 rounded-xl bg-indigo-400/20 px-3 py-2 text-xs font-black text-indigo-100 ring-1 ring-indigo-300/35 transition hover:bg-indigo-400/30"
+              aria-label="밤 활동 미리보기 열기"
+              title="밤 미션과 퀴즈 미리보기"
+            >
+              <MoonStar className="h-4 w-4" />
+              밤 활동 미리보기
+            </button>
+          )}
           <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold">
             {isNight ? <Moon className="h-3.5 w-3.5" /> : <Sun className="h-3.5 w-3.5" />}
             {STATE_LABELS[room.gameState]}
@@ -732,8 +812,6 @@ function PlayPageInner() {
                     role={me.role}
                     avatarId={me.avatarId}
                     isAlive={me.isAlive}
-                    nightQuiz={room.nightQuizState}
-                    mafiaMission={room.mafiaMissionState}
                     mafiaAllies={mafiaAllies}
                     playerId={me.id}
                     viewerRole={me.role}
@@ -763,17 +841,6 @@ function PlayPageInner() {
                 </motion.section>
               )}
             </AnimatePresence>
-
-            {me.role &&
-              me.isAlive &&
-              room.pendingNightQuizConfig &&
-              room.nightQuizPreviewByRole?.[me.role] &&
-              !room.nightQuizState?.active && (
-                <NightQuizPreviewCard
-                  config={room.pendingNightQuizConfig}
-                  roleLabel={ROLE_LABELS[me.role]}
-                />
-              )}
 
             {room.gameState === 'DAY_MATCH' && (
               <>
@@ -847,6 +914,44 @@ function PlayPageInner() {
           setRoleRevealOpen(false);
         }}
       />
+
+      <Popup
+        open={nightPreviewOpen && canOpenNightPreview}
+        title="밤 활동 미리보기"
+        accent="violet"
+        centered
+        onClose={() => setNightPreviewOpen(false)}
+      >
+        <div className="max-h-[70vh] space-y-3 overflow-y-auto pr-1">
+          {mafiaMissionPreviewAvailable && room.mafiaMissionState && (
+            <section className="rounded-2xl border border-red-400/30 bg-red-950/60 p-4 ring-1 ring-red-300/15">
+              <div className="flex items-center gap-2 text-red-100">
+                <ScrollText className="h-5 w-5" />
+                <h4 className="font-black">마피아 비밀 미션</h4>
+              </div>
+              <p className="mt-3 text-sm font-semibold leading-relaxed text-white/90">
+                {room.mafiaMissionState.description}
+              </p>
+              <p className="mt-3 text-[11px] text-red-100/60">
+                이 내용은 마피아에게만 보이는 비밀 미션입니다.
+              </p>
+            </section>
+          )}
+
+          {nightQuizPreviewAvailable && room.pendingNightQuizConfig && me.role && (
+            <div className="rounded-2xl border border-indigo-400/25 bg-indigo-950/35 p-1">
+              <div className="flex items-center gap-2 px-3 pt-3 text-indigo-100">
+                <BookOpen className="h-5 w-5" />
+                <h4 className="font-black">직업별 밤 퀴즈</h4>
+              </div>
+              <NightQuizPreviewCard
+                config={room.pendingNightQuizConfig}
+                roleLabel={ROLE_LABELS[me.role]}
+              />
+            </div>
+          )}
+        </div>
+      </Popup>
 
       <Popup
         open={hintOpen}

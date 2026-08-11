@@ -6,14 +6,12 @@ import { Eye, EyeOff, Sparkles, Users } from 'lucide-react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { ROLE_ACCENTS, ROLE_BLURBS, ROLE_LABELS } from '@/lib/game/roles';
 import { type CharacterViewerRole } from '@/lib/characterUtils';
-import type { MafiaMissionState, NightQuizState, Player, Role } from '@/types/game';
+import type { Player, Role } from '@/types/game';
 
 export function RoleCard({
   role,
   avatarId,
   isAlive = true,
-  nightQuiz,
-  mafiaMission,
   mafiaAllies = [],
   playerId = null,
   viewerRole = role,
@@ -22,8 +20,6 @@ export function RoleCard({
   role: Role;
   avatarId?: string | null;
   isAlive?: boolean;
-  nightQuiz?: NightQuizState | null;
-  mafiaMission?: MafiaMissionState | null;
   /** 마피아만 — 다른 마피아 동료 목록 */
   mafiaAllies?: Player[];
   /** 역할 카드의 대상 플레이어 ID */
@@ -40,14 +36,14 @@ export function RoleCard({
     <div className="w-full max-w-sm">
       <div className="perspective-[1200px]">
         <motion.div
-          className="relative h-72 w-full sm:h-80"
+          className="relative h-72 w-full transform-gpu sm:h-80"
           animate={{ rotateY: flipped ? 180 : 0 }}
           transition={{ duration: 0.65, ease: [0.4, 0.1, 0.2, 1] }}
-          style={{ transformStyle: 'preserve-3d' }}
+          style={{ transformStyle: 'preserve-3d', WebkitTransformStyle: 'preserve-3d', willChange: 'transform' }}
         >
           <div
             className="absolute inset-0 flex flex-col items-center justify-center rounded-2xl border border-white/15 bg-gradient-to-br from-stone-800 to-stone-950 shadow-xl"
-            style={{ backfaceVisibility: 'hidden' }}
+            style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}
           >
             <Sparkles className="mb-4 h-11 w-11 text-amber-300" />
             <p className="text-xl font-black tracking-wide text-white">비밀 직업</p>
@@ -55,9 +51,10 @@ export function RoleCard({
           </div>
 
           <div
-            className="absolute inset-0 flex flex-col rounded-2xl p-5 shadow-xl sm:p-6"
+            className="absolute inset-0 flex flex-col overflow-hidden rounded-2xl p-5 shadow-xl sm:p-6"
             style={{
               backfaceVisibility: 'hidden',
+              WebkitBackfaceVisibility: 'hidden',
               transform: 'rotateY(180deg)',
               background: `linear-gradient(160deg, ${accent}, #1c1917 70%)`,
             }}
@@ -95,8 +92,8 @@ export function RoleCard({
               </div>
             )}
 
-            {isMafia && (
-              <div className="mt-auto space-y-2 pt-3">
+            <div className="mt-auto space-y-2 pt-3">
+              {isMafia && (
                 <div className="rounded-lg bg-black/40 px-2.5 py-2 ring-1 ring-red-400/30">
                   <p className="mb-1.5 flex items-center gap-1 text-[10px] font-bold text-red-200">
                     <Users className="h-3 w-3" />
@@ -107,8 +104,8 @@ export function RoleCard({
                       다른 마피아가 없습니다. (혼자)
                     </p>
                   ) : (
-                    <ul className="space-y-1">
-                      {mafiaAllies.map((ally) => (
+                    <ul className="max-h-12 space-y-1 overflow-hidden">
+                      {mafiaAllies.slice(0, 3).map((ally) => (
                         <li
                           key={ally.id}
                           className="flex items-center gap-2 text-[11px] font-bold text-white"
@@ -135,28 +132,8 @@ export function RoleCard({
                     </ul>
                   )}
                 </div>
-                {nightQuiz?.question && (
-                  <div className="rounded-lg bg-black/35 px-2.5 py-2">
-                    <p className="text-[10px] font-bold text-amber-200">
-                      밤 퀴즈 (진행 중)
-                    </p>
-                    <p className="text-[11px] leading-snug text-white/90">
-                      {nightQuiz.question}
-                    </p>
-                  </div>
-                )}
-                {mafiaMission?.active && mafiaMission.description && (
-                  <div className="rounded-lg bg-red-950/70 px-2.5 py-2 ring-1 ring-red-400/40">
-                    <p className="text-[10px] font-bold text-red-200">
-                      마피아 비밀 미션
-                    </p>
-                    <p className="text-[11px] leading-snug text-white/90">
-                      {mafiaMission.description}
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </motion.div>
       </div>

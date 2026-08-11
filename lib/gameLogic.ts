@@ -190,6 +190,9 @@ export function resolveNight(
     if (savedSet.has(id)) return false;
     return true;
   });
+  const mafiaFriendlyFirePlayerIds = deadPlayerIds.filter(
+    (id) => nextRoom.players[id]?.role === 'MAFIA',
+  );
 
   // 공격 대상과 의사의 보호 대상이 일치하고, 다른 희생자도 없을 때만 성공 연출을 띄운다.
   const isDoctorDefended =
@@ -290,7 +293,12 @@ export function resolveNight(
     if (!p) return;
     if (reveal && p.role) deadRoles[id] = p.role;
     deathAnnouncements.push(
-      buildNightDeathAnnouncement(p.name, p.role, reveal),
+      buildNightDeathAnnouncement(
+        p.name,
+        p.role,
+        reveal,
+        mafiaFriendlyFirePlayerIds.includes(id),
+      ),
     );
   });
 
@@ -317,6 +325,7 @@ export function resolveNight(
     morningEvents,
     deadRoles,
     deathAnnouncements,
+    mafiaFriendlyFirePlayerIds,
     doctorSavedPlayerId: doctorSave.selectedId,
     doctorSaveWasTie: doctorSave.wasTie,
     isDoctorDefended,
@@ -360,6 +369,7 @@ export function resolveNight(
     nightResults,
     morningRevealIndex: 0,
     morningIdentityStep: 'NONE',
+    morningTransitionStartedAt: Date.now(),
     currentHint: quizHint ?? nextRoom.currentHint ?? null,
     gameState: 'RESULT',
     votes: {},
@@ -411,6 +421,7 @@ export function resolveReviveVote(room: GameRoom): GameRoom {
       : null,
     gmEvent: null,
     votes: {},
+    morningTransitionStartedAt: null,
     gameState: 'DAY_TALK',
   };
   return evaluateGameEnd(next);
@@ -424,6 +435,7 @@ export function dismissMorningResult(room: GameRoom): GameRoom {
     gameState: 'DAY_TALK',
     morningRevealIndex: 0,
     morningIdentityStep: 'NONE',
+    morningTransitionStartedAt: null,
     gmEvent: room.gmEvent === 'REVIVE_NIGHT' ? 'REVIVE_NIGHT' : null,
   });
 }

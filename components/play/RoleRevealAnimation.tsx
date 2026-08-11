@@ -14,7 +14,7 @@ import {
   WandSparkles,
 } from 'lucide-react';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
-import { getCharacterStateForRole } from '@/lib/characterUtils';
+import { getCharacterImageUrl, getCharacterStateForRole } from '@/lib/characterUtils';
 import { playRoleRevealSound } from '@/lib/game/audio';
 import { ROLE_ACCENTS, ROLE_LABELS } from '@/lib/game/roles';
 import type { Role } from '@/types/game';
@@ -70,6 +70,18 @@ export function RoleRevealAnimation({
       return;
     }
 
+    // GAME_START 직후 앞면 자원을 먼저 캐시해 회전 중 흰 화면이 보이지 않게 한다.
+    const characterId = avatarId ?? 'M0';
+    const roleState = getCharacterStateForRole(role);
+    [
+      getCharacterImageUrl(characterId, 'normal'),
+      getCharacterImageUrl(characterId, roleState),
+    ].forEach((src) => {
+      const image = new window.Image();
+      image.decoding = 'async';
+      image.src = src;
+    });
+
     const resetTimer = window.setTimeout(() => {
       setRevealed(false);
       setConfirmSeconds(5);
@@ -80,7 +92,7 @@ export function RoleRevealAnimation({
       window.clearTimeout(resetTimer);
       window.clearTimeout(autoRevealTimer);
     };
-  }, [open, revealCard]);
+  }, [avatarId, open, revealCard, role]);
 
   useEffect(() => {
     if (!open || !revealed) return;
@@ -127,14 +139,14 @@ export function RoleRevealAnimation({
 
             <div className="relative h-[min(70vh,34rem)] w-full [perspective:1200px]">
               <motion.div
-                className="absolute inset-0"
+                className="absolute inset-0 transform-gpu will-change-transform"
                 animate={{ rotateY: revealed ? 180 : 0 }}
                 transition={{ duration: 0.9, ease: [0.22, 0.8, 0.24, 1] }}
-                style={{ transformStyle: 'preserve-3d' }}
+                style={{ transformStyle: 'preserve-3d', WebkitTransformStyle: 'preserve-3d' }}
               >
                 <div
                   className="absolute inset-0 overflow-hidden rounded-[2rem] border border-sky-200/35 bg-[linear-gradient(145deg,#172554,#111827_56%,#312e81)] p-6 shadow-[0_0_70px_rgba(56,189,248,0.3)]"
-                  style={{ backfaceVisibility: 'hidden' }}
+                  style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}
                 >
                   <motion.div
                     aria-hidden="true"
@@ -180,8 +192,9 @@ export function RoleRevealAnimation({
                   className="absolute inset-0 overflow-hidden rounded-[2rem] border border-white/25 p-5 shadow-2xl sm:p-6"
                   style={{
                     backfaceVisibility: 'hidden',
+                    WebkitBackfaceVisibility: 'hidden',
                     transform: 'rotateY(180deg)',
-                    background: `linear-gradient(155deg, ${accent}, rgba(15,23,42,0.98) 78%)`,
+                  background: `linear-gradient(155deg, ${accent}, rgba(15,23,42,0.98) 78%)`,
                   }}
                 >
                   <div className="relative flex h-full flex-col">

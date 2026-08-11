@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BriefcaseMedical, Newspaper, Search, Stethoscope } from 'lucide-react';
 import {
   getEventIllustrationPath,
@@ -25,6 +25,21 @@ export function EventIllustration({
   className?: string;
 }) {
   const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setFailed(false);
+    let cancelled = false;
+    const probe = new window.Image();
+    probe.onload = () => {
+      if (!cancelled) setFailed(false);
+    };
+    probe.onerror = () => {
+      if (!cancelled) setFailed(true);
+    };
+    probe.src = getEventIllustrationPath(kind);
+    return () => {
+      cancelled = true;
+    };
+  }, [kind]);
   const isDoctor =
     kind === 'doctor_confused' || kind === 'doctor_idle' || kind === 'doctor_fail';
   const isReporter = !isDoctor;
@@ -47,12 +62,28 @@ export function EventIllustration({
           src={getEventIllustrationPath(kind)}
           alt=""
           className="absolute inset-0 h-full w-full object-contain"
+          loading="eager"
+          decoding="async"
           onError={() => setFailed(true)}
         />
       )}
-      <div className={`relative z-10 flex flex-col items-center justify-center gap-2 px-3 text-center ${failed ? '' : 'opacity-0'}`}>
-        {isDoctor ? <BriefcaseMedical className="h-1/3 w-1/3" /> : <Icon className="h-1/3 w-1/3" />}
-        <span className="text-[10px] font-black leading-tight tracking-[0.12em]">
+      <div
+        className={`absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 px-3 text-center ${failed ? '' : 'opacity-0'}`}
+      >
+        <div
+          className={`flex h-24 w-24 items-center justify-center rounded-full ring-1 ${
+            isDoctor
+              ? 'bg-emerald-300/10 text-emerald-100 ring-emerald-200/30'
+              : 'bg-amber-300/10 text-amber-100 ring-amber-200/30'
+          }`}
+        >
+          {isDoctor ? (
+            <BriefcaseMedical className="h-12 w-12" strokeWidth={1.5} />
+          ) : (
+            <Icon className="h-12 w-12" strokeWidth={1.5} />
+          )}
+        </div>
+        <span className="text-xs font-black leading-tight tracking-[0.12em]">
           {isReporter
             ? kind === 'anonymous_reporter'
               ? 'X-신문사'

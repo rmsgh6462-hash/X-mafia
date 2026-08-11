@@ -15,7 +15,11 @@ import { ScreenFlashOverlay } from '@/components/play/ScreenFlashOverlay';
 import { useMafiaKillReveal } from '@/hooks/useMafiaKillReveal';
 import { playerGenderFromAvatarId } from '@/lib/game/avatars';
 import { playMorningEventSound } from '@/lib/game/audio';
-import { getCharacterStateForRole } from '@/lib/characterUtils';
+import {
+  getCharacterPronoun,
+  getCharacterStateForRole,
+  getNightAttackAnnouncement,
+} from '@/lib/characterUtils';
 import { ROLE_LABELS } from '@/lib/game/roles';
 import type {
   ActiveMorningEvent,
@@ -576,6 +580,14 @@ function MafiaKillPanel({
   const deadRole = targetId
     ? result.deadRoles?.[targetId] ?? (revealRoles && wasKilled ? target?.role : null)
     : null;
+  const mafiaFriendlyFire = Boolean(
+    targetId && result.mafiaFriendlyFirePlayerIds?.includes(targetId),
+  );
+  const deathRoleMessage =
+    revealRoles && deadRole
+      ? getNightAttackAnnouncement(deadRole, mafiaFriendlyFire)
+      : null;
+  const pronoun = getCharacterPronoun(resolvePlayerGender(target));
   const isFullRole = identityStep === 'REVEAL_FULL_ROLE';
   const isTease = identityStep === 'TEASE';
   const isIdentityReveal =
@@ -650,9 +662,7 @@ function MafiaKillPanel({
         >
           {showDeadVisual ? (
             <>
-              지난밤 {deadName} 님이
-              <br />
-              마피아의 습격을 받고 탈락했습니다...
+              {deathRoleMessage ?? `${deadName} 님이 마피아의 습격을 받고 탈락했습니다.`}
             </>
           ) : wasKilled ? (
             <>
@@ -682,7 +692,7 @@ function MafiaKillPanel({
           >
             <p className="text-base font-black">
               {isFullRole
-                ? `${deadName} 님의 정체는 ${ROLE_LABELS[deadRole]}였습니다.`
+                ? `${pronoun}의 정체는 ${ROLE_LABELS[deadRole]}였습니다.`
                 : isTease
                   ? `${deadName} 님은... 마피아가`
                   : `${deadName} 님은... 마피아가 ${

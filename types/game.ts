@@ -216,6 +216,8 @@ export interface NightResults {
   deadRoles?: Record<string, Role>;
   /** 전원 공지 문구 목록 */
   deathAnnouncements?: string[];
+  /** 마피아의 팀킬로 확정 탈락한 대상 ID 목록 */
+  mafiaFriendlyFirePlayerIds?: string[];
   /** 의사 최종 구출 대상 (동률 시 무작위 1명) */
   doctorSavedPlayerId?: string | null;
   doctorSaveWasTie?: boolean;
@@ -278,6 +280,11 @@ export interface GameRoom {
   gameState: GameState;
   theme: Theme;
   players: Record<string, Player>;
+
+  /** 게임 시작 순간부터 대기 화면의 해질녘→밤→아침 전환을 동기화한다. */
+  openingSequenceStartedAt?: number | null;
+  /** 밤 결과가 집계된 순간부터 밤→아침 전환을 동기화한다. */
+  morningTransitionStartedAt?: number | null;
 
   /** 밤 전원 퀴즈 */
   nightQuizState: NightQuizState | null;

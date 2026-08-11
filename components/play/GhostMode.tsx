@@ -504,18 +504,18 @@ function MissionSpectatePanel({
                     </span>
                     <span
                       className={`text-[10px] font-bold ${
-                        sub
-                          ? sub.correct
+                        !sub || sub.answer === '(시간초과)'
+                          ? 'text-amber-200'
+                          : sub.correct
                             ? 'text-emerald-300'
                             : 'text-red-300'
-                          : 'text-white/40'
                       }`}
                     >
-                      {sub
-                        ? sub.correct
+                      {!sub || sub.answer === '(시간초과)'
+                        ? '미응답'
+                        : sub.correct
                           ? `정답 (${sub.answer})`
-                          : `오답 (${sub.answer})`
-                        : '미제출'}
+                          : `오답 (${sub.answer})`}
                     </span>
                   </li>
                 );
