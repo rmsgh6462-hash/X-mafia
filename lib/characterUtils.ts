@@ -1,6 +1,9 @@
-import type { Role } from '@/types/game';
+import type { PlayerGender, Role } from '@/types/game';
+import { ROLE_LABELS } from '@/lib/game/roles';
 
 export type CharacterViewerRole = Role | 'TEACHER';
+
+export type CharacterGender = PlayerGender | 'M' | 'F';
 
 export type CharacterState =
   | 'normal'
@@ -85,6 +88,29 @@ export function getCharacterStateForRole(
     default:
       return 'normal';
   }
+}
+
+/** 정체 공개 문구에서 사용할 안전한 3인칭 대명사입니다. */
+export function getCharacterPronoun(
+  gender?: CharacterGender | null,
+): '그' | '그녀' {
+  return gender === 'girl' || gender === 'F' ? '그녀' : '그';
+}
+
+/** 사망 공개 시 정체 공개 설정을 존중하면서 역할별 안내 문구를 만듭니다. */
+export function getNightAttackAnnouncement(
+  role?: Role | null,
+  mafiaFriendlyFire = false,
+): string {
+  if (role === 'MAFIA' && mafiaFriendlyFire) {
+    return '마피아가 동료 마피아를 공격했습니다.';
+  }
+  if (!role || role === 'CITIZEN') {
+    return '선량한 시민이 공격당했습니다.';
+  }
+
+  const particle = role === 'POLICE' ? '이' : '가';
+  return `선량한 ${ROLE_LABELS[role]}${particle} 공격당했습니다.`;
 }
 
 /**
