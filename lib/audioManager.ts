@@ -26,6 +26,7 @@ const SOUND_PATHS = {
   bgmDay: ['/sounds/bgm_day.mp3', '/sounds/bgm-day.wav'],
   bgmNight: ['/sounds/bgm_night.mp3', '/sounds/bgm-night.wav'],
   envBirds: ['/sounds/env_birds.mp3', '/sounds/env-birds.wav'],
+  morningBirds: ['/sounds/morning-birds.wav'],
   envStream: ['/sounds/env_stream.mp3', '/sounds/env-stream.wav'],
   envCrow: ['/sounds/env_crow.mp3', '/sounds/env-crow.wav'],
   envRain: ['/sounds/env_rain.mp3', '/sounds/env-rain.wav'],
@@ -275,6 +276,12 @@ export async function playGunshot(options?: { onFlash?: () => void }): Promise<v
   } catch {
     /* 시각 연출만 진행 */
   }
+}
+
+/** 총격 직후 아침이 밝는 순간의 짧은 새소리. 파일 실패 시 조용히 생략한다. */
+export async function playMorningBirds(volume = 0.34): Promise<void> {
+  if (typeof window === 'undefined' || sfxBlocked) return;
+  await playFromPaths(SOUND_PATHS.morningBirds, volume, false);
 }
 
 /** 기자 신문: 셔터 → 0.3초 후 신문 펼치는 소리 */
