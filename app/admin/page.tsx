@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { auth } from '@/auth';
+import { isGoogleAuthConfigured } from '@/auth.config';
 import { isAdminEmail } from '@/lib/auth/admin';
 import { AdminLoginGate } from '@/components/admin/AdminLoginGate';
 import { AdminSettingsPanel } from '@/components/admin/AdminSettingsPanel';
@@ -13,6 +14,7 @@ export default async function AdminPage({
   const session = await auth();
   const params = searchParams ? await searchParams : undefined;
   const email = session?.user?.email ?? null;
+  const googleConfigured = isGoogleAuthConfigured();
 
   if (email && !isAdminEmail(email)) {
     redirect('/?adminError=forbidden');
@@ -32,7 +34,10 @@ export default async function AdminPage({
             signOutSlot={<AdminSignOutButton />}
           />
         ) : (
-          <AdminLoginGate authError={params?.error ?? null} />
+          <AdminLoginGate
+            authError={params?.error ?? null}
+            googleConfigured={googleConfigured}
+          />
         )}
       </div>
     </div>

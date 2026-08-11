@@ -2,17 +2,49 @@ import type { NextAuthConfig } from 'next-auth';
 import Google from 'next-auth/providers/google';
 import { isAdminEmail } from '@/lib/auth/admin';
 
+function readEnv(...keys: string[]): string {
+  for (const key of keys) {
+    const value = process.env[key]?.trim();
+    if (value) return value;
+  }
+  return '';
+}
+
+/** Google OAuth 클라이언트 정보가 서버 환경변수에 있는지 확인한다. */
+export function isGoogleAuthConfigured(): boolean {
+  const clientId = readEnv('GOOGLE_CLIENT_ID', 'AUTH_GOOGLE_ID');
+  const clientSecret = readEnv('GOOGLE_CLIENT_SECRET', 'AUTH_GOOGLE_SECRET');
+  return Boolean(clientId && clientSecret);
+}
+
+const googleClientId = readEnv('GOOGLE_CLIENT_ID', 'AUTH_GOOGLE_ID');
+const googleClientSecret = readEnv(
+  'GOOGLE_CLIENT_SECRET',
+  'AUTH_GOOGLE_SECRET',
+);
+
+if (process.env.NODE_ENV !== 'production') {
+  console.info('[auth] Google OAuth env', {
+    hasGoogleClientId: Boolean(googleClientId),
+    hasGoogleClientSecret: Boolean(googleClientSecret),
+    hasAuthSecret: Boolean(
+      readEnv('AUTH_SECRET', 'NEXTAUTH_SECRET'),
+    ),
+    hasAdminEmail: Boolean(
+      readEnv('ADMIN_EMAIL', 'NEXT_PUBLIC_ADMIN_EMAIL'),
+    ),
+  });
+}
+
 /**
- * Edge(middleware)에서도 안전하게 쓸 수 있는 Auth 설정.
- * Google Client ID/Secret은 AUTH_GOOGLE_* 또는 GOOGLE_CLIENT_* 를 모두 지원한다.
+ * Edge(proxy/middleware)에서도 안전하게 쓸 수 있는 Auth 설정.
+ * 우선순위: GOOGLE_CLIENT_* → AUTH_GOOGLE_*
  */
 export const authConfig = {
   providers: [
     Google({
-      clientId:
-        process.env.AUTH_GOOGLE_ID ?? process.env.GOOGLE_CLIENT_ID,
-      clientSecret:
-        process.env.AUTH_GOOGLE_SECRET ?? process.env.GOOGLE_CLIENT_SECRET,
+      clientId: googleClientId,
+      clientSecret: googleClientSecret,
     }),
   ],
   pages: {

@@ -2,11 +2,32 @@ import Link from 'next/link';
 import { Shield } from 'lucide-react';
 import { signIn } from '@/auth';
 
+function authErrorMessage(authError?: string | null): string | null {
+  if (!authError) return null;
+  switch (authError) {
+    case 'Configuration':
+      return 'Google 로그인 설정이 완료되지 않았습니다. 서버 환경변수 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / AUTH_SECRET 을 확인해 주세요.';
+    case 'AccessDenied':
+      return '관리자 권한이 없는 계정입니다.';
+    case 'OAuthAccountNotLinked':
+      return '이미 다른 방식으로 연결된 계정입니다. 같은 Google 계정으로 다시 시도해 주세요.';
+    case 'OAuthCallback':
+    case 'Callback':
+      return 'Google 로그인 콜백 처리에 실패했습니다. 리다이렉트 URI와 AUTH_URL을 확인해 주세요.';
+    default:
+      return '로그인에 실패했습니다. 다시 시도해 주세요.';
+  }
+}
+
 export function AdminLoginGate({
   authError,
+  googleConfigured,
 }: {
   authError?: string | null;
+  googleConfigured: boolean;
 }) {
+  const message = authErrorMessage(authError);
+
   return (
     <>
       <div className="mb-8 flex items-center justify-between gap-3">
@@ -30,13 +51,18 @@ export function AdminLoginGate({
       </header>
 
       <section className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 shadow-2xl backdrop-blur-sm sm:p-6">
-        {authError && (
+        {!googleConfigured && (
+          <p className="mb-4 rounded-xl bg-amber-950/55 px-4 py-3 text-sm font-semibold text-amber-100 ring-1 ring-amber-400/30">
+            서버에 Google OAuth 환경변수가 없습니다. `.env.local`(로컬) 또는
+            Vercel Environment Variables에
+            `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `AUTH_SECRET`을
+            설정한 뒤 다시 배포해 주세요.
+          </p>
+        )}
+
+        {message && (
           <p className="mb-4 rounded-xl bg-red-950/60 px-4 py-3 text-sm font-semibold text-red-100 ring-1 ring-red-400/30">
-            {authError === 'Configuration'
-              ? 'Google 로그인 설정이 완료되지 않았습니다. 환경변수를 확인해 주세요.'
-              : authError === 'AccessDenied'
-                ? '관리자 권한이 없는 계정입니다.'
-                : '로그인에 실패했습니다. 다시 시도해 주세요.'}
+            {message}
           </p>
         )}
 
@@ -48,7 +74,8 @@ export function AdminLoginGate({
         >
           <button
             type="submit"
-            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-white py-3.5 text-sm font-black text-stone-900 transition hover:bg-amber-100"
+            disabled={!googleConfigured}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-white py-3.5 text-sm font-black text-stone-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <GoogleMark />
             Google 계정으로 로그인
