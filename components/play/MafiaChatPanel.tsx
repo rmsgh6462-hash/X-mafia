@@ -26,7 +26,9 @@ export function MafiaChatPanel({
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
+  const [unread, setUnread] = useState(0);
+  const prevLenRef = useRef<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messages = useMemo(() => listMafiaChatMessages(room), [room]);
   const allyCount = useMemo(
@@ -36,6 +38,21 @@ export function MafiaChatPanel({
       ).length,
     [room.players],
   );
+
+  useEffect(() => {
+    const len = messages.length;
+    if (prevLenRef.current === null) {
+      prevLenRef.current = len;
+      return;
+    }
+    if (collapsed && len > prevLenRef.current) {
+      setUnread((n) => n + (len - prevLenRef.current!));
+    }
+    if (!collapsed) {
+      setUnread(0);
+    }
+    prevLenRef.current = len;
+  }, [messages.length, collapsed]);
 
   useEffect(() => {
     if (!collapsed) {
@@ -66,7 +83,10 @@ export function MafiaChatPanel({
     <section className="rounded-2xl border border-red-400/35 bg-red-950/45 p-3 ring-1 ring-red-500/20">
       <button
         type="button"
-        onClick={() => setCollapsed((v) => !v)}
+        onClick={() => {
+          setCollapsed((v) => !v);
+          setUnread(0);
+        }}
         className="flex w-full items-center justify-between gap-2 text-left"
       >
         <h3 className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-red-100">
@@ -75,6 +95,11 @@ export function MafiaChatPanel({
           <span className="rounded bg-red-500/40 px-1.5 py-0.5 text-[10px] font-bold normal-case tracking-normal">
             {allyCount}명 · {messages.length}개
           </span>
+          {collapsed && unread > 0 && (
+            <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-black normal-case tracking-normal text-stone-900">
+              {unread > 99 ? '99+' : unread}
+            </span>
+          )}
         </h3>
         <span className="text-[11px] font-bold text-red-100/60">
           {collapsed ? '펼치기' : '접기'}

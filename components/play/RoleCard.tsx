@@ -46,7 +46,7 @@ export function RoleCard({
             style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}
           >
             <Sparkles className="mb-4 h-11 w-11 text-amber-300" />
-            <p className="text-xl font-black tracking-wide text-white">비밀 직업</p>
+            <p className="text-xl font-black tracking-wide text-white">직업 카드</p>
             <p className="mt-3 text-sm text-white/55">아래 버튼으로 확인하세요</p>
           </div>
 
@@ -138,26 +138,23 @@ export function RoleCard({
         </motion.div>
       </div>
 
-      <div className="mt-3 flex gap-2">
-        <button
-          type="button"
-          disabled={flipped}
-          onClick={() => setFlipped(true)}
-          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-amber-400 py-2.5 text-sm font-black text-stone-900 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <Eye className="h-4 w-4" />
-          직업 카드 보기
-        </button>
-        <button
-          type="button"
-          disabled={!flipped}
-          onClick={() => setFlipped(false)}
-          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-white/10 py-2.5 text-sm font-bold text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <EyeOff className="h-4 w-4" />
-          카드 다시 덮기
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={() => setFlipped((v) => !v)}
+        className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-amber-400 py-2.5 text-sm font-black text-stone-900 transition hover:bg-amber-300"
+      >
+        {flipped ? (
+          <>
+            <EyeOff className="h-4 w-4" />
+            직업 카드 뒤집기
+          </>
+        ) : (
+          <>
+            <Eye className="h-4 w-4" />
+            직업 카드 보기
+          </>
+        )}
+      </button>
     </div>
   );
 }

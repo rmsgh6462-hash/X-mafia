@@ -153,6 +153,8 @@ export interface MafiaMissionState {
   type: MafiaMissionType | null;
   description: string;
   outcome: MissionOutcome;
+  /** 교사 부여 시각 — 학생 전원 안내 팝업 키 */
+  assignedAt?: number | null;
   /** NIGHT_DISRUPT: 연속 오답 목표 (표시/보조) */
   disruptTargetCount?: number;
   disruptProgress?: number;

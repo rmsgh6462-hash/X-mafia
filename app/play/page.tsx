@@ -159,6 +159,7 @@ function PlayPageInner() {
   const [roleRevealOpen, setRoleRevealOpen] = useState(false);
   const [nightPreviewOpen, setNightPreviewOpen] = useState(false);
   const [roleRevealComplete, setRoleRevealComplete] = useState(false);
+  const [mafiaMissionNoticeOpen, setMafiaMissionNoticeOpen] = useState(false);
   const [alertOpen, setAlertOpen] = useState(false);
   const [alertTitle, setAlertTitle] = useState('입장 실패');
   const [alertMessage, setAlertMessage] = useState('');
@@ -169,6 +170,7 @@ function PlayPageInner() {
   const seenVoteDeathRef = useRef<number | null>(null);
   const seenMorningResultRef = useRef<string | null>(null);
   const seenRoleRevealRef = useRef<string | null>(null);
+  const seenMafiaMissionRef = useRef<string | null>(null);
   const joinGuardRef = useRef(false);
   const [openingTransitionActive, setOpeningTransitionActive] = useState(false);
 
@@ -361,6 +363,26 @@ function PlayPageInner() {
     seenVoteDeathRef.current = result.resolvedAt;
     setVoteDeathOpen(true);
   }, [room?.dayVoteResult, room, me]);
+
+  // 마피아 미션 부여 — 전체 학생 안내 (구독 중 새로 부여될 때만)
+  useEffect(() => {
+    if (!room || !me) return;
+    const mms = room.mafiaMissionState;
+    const key = mms?.active
+      ? mms.assignedAt != null
+        ? `at:${mms.assignedAt}`
+        : `desc:${mms.type}:${mms.description}`
+      : null;
+
+    if (seenMafiaMissionRef.current === null) {
+      // 첫 스냅샷: 이미 부여된 미션은 알리지 않고 기준만 잡는다.
+      seenMafiaMissionRef.current = key ?? 'none';
+      return;
+    }
+    if (!key || seenMafiaMissionRef.current === key) return;
+    seenMafiaMissionRef.current = key;
+    setMafiaMissionNoticeOpen(true);
+  }, [room?.mafiaMissionState, room, me]);
 
   // 아침 결과 공개 — 교사 morningRevealIndex와 동기화해 다시 열어 둔다.
   useEffect(() => {
@@ -700,6 +722,10 @@ function PlayPageInner() {
       NIGHT_PREVIEW_ROLES.includes(me.role) &&
       (nightQuizPreviewAvailable || mafiaMissionPreviewAvailable),
   );
+  const nightPreviewButtonLabel =
+    me.role === 'MAFIA' ? '밤·마피아 미션 확인' : '밤 미션 확인';
+  const nightPreviewPopupTitle =
+    me.role === 'MAFIA' ? '밤·마피아 미션 확인' : '밤 미션 확인';
 
   return (
     <PlayShell
@@ -736,11 +762,11 @@ function PlayPageInner() {
               type="button"
               onClick={() => setNightPreviewOpen(true)}
               className="mb-2 inline-flex items-center gap-1.5 rounded-xl bg-indigo-400/20 px-3 py-2 text-xs font-black text-indigo-100 ring-1 ring-indigo-300/35 transition hover:bg-indigo-400/30"
-              aria-label="밤 활동 미리보기 열기"
-              title="밤 미션과 퀴즈 미리보기"
+              aria-label={nightPreviewButtonLabel}
+              title={nightPreviewButtonLabel}
             >
               <MoonStar className="h-4 w-4" />
-              밤 활동 미리보기
+              {nightPreviewButtonLabel}
             </button>
           )}
           <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold">
@@ -917,7 +943,7 @@ function PlayPageInner() {
 
       <Popup
         open={nightPreviewOpen && canOpenNightPreview}
-        title="밤 활동 미리보기"
+        title={nightPreviewPopupTitle}
         accent="violet"
         centered
         onClose={() => setNightPreviewOpen(false)}
@@ -951,6 +977,21 @@ function PlayPageInner() {
             </div>
           )}
         </div>
+      </Popup>
+
+      <Popup
+        open={mafiaMissionNoticeOpen}
+        title="미션 안내"
+        accent="red"
+        centered
+        onClose={() => setMafiaMissionNoticeOpen(false)}
+      >
+        <p className="text-base font-black leading-snug text-white">
+          마피아에게 미션이 부여되었습니다.
+        </p>
+        <p className="mt-2 text-xs text-white/55">
+          미션 내용은 마피아 학생만 확인할 수 있습니다.
+        </p>
       </Popup>
 
       <Popup

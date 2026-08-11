@@ -695,10 +695,30 @@ function GhostChatPanel({
   onPredict: (side: WinnerSide) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [collapsed, setCollapsed] = useState(false);
+  const [unread, setUnread] = useState(0);
+  const prevLenRef = useRef<number | null>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
+    const len = messages.length;
+    if (prevLenRef.current === null) {
+      prevLenRef.current = len;
+      return;
+    }
+    if (collapsed && len > prevLenRef.current) {
+      setUnread((n) => n + (len - prevLenRef.current!));
+    }
+    if (!collapsed) {
+      setUnread(0);
+    }
+    prevLenRef.current = len;
+  }, [messages.length, collapsed]);
+
+  useEffect(() => {
+    if (!collapsed) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages.length, collapsed]);
 
   return (
     <div className="space-y-3">
@@ -732,62 +752,91 @@ function GhostChatPanel({
         </div>
       </section>
 
-      <section className="flex h-80 flex-col rounded-2xl bg-black/35 p-3 ring-1 ring-violet-400/25">
-        <h3 className="mb-1 px-1 text-xs font-bold uppercase tracking-wider text-violet-200/80">
-          👻 유령 전용 채팅방
-        </h3>
-        <p className="mb-2 rounded-lg bg-violet-500/15 px-2.5 py-2 text-[11px] font-semibold leading-snug text-violet-100/90">
-          👻 유령끼리만 보이는 비밀 채팅입니다. 생존 학생에게 정답/직업을
-          스포일러하지 마세요!
-        </p>
-        <div className="flex-1 space-y-2 overflow-y-auto px-1">
-          {messages.length === 0 && (
-            <p className="text-xs text-white/40">아직 메시지가 없습니다.</p>
-          )}
-          {messages.map((m) => {
-            const mine = m.senderId === me.id;
-            return (
-              <div
-                key={m.id}
-                className={`max-w-[88%] rounded-2xl px-3 py-2 text-sm ${
-                  mine
-                    ? 'ml-auto bg-violet-600 text-white'
-                    : 'bg-white/10 text-white'
-                }`}
-              >
-                <p className="flex items-center justify-between gap-2 text-[10px] font-semibold opacity-75">
-                  <span>{m.senderName}</span>
-                  <span className="font-normal tabular-nums opacity-80">
-                    {formatChatTime(m.timestamp)}
-                  </span>
-                </p>
-                <p className="mt-0.5 whitespace-pre-wrap break-words">{m.text}</p>
+      <section className="rounded-2xl bg-black/35 p-3 ring-1 ring-violet-400/25">
+        <button
+          type="button"
+          onClick={() => {
+            setCollapsed((v) => !v);
+            setUnread(0);
+          }}
+          className="flex w-full items-center justify-between gap-2 text-left"
+        >
+          <h3 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-violet-200/80">
+            👻 유령 전용 채팅방
+            <span className="rounded bg-violet-500/35 px-1.5 py-0.5 text-[10px] font-bold normal-case tracking-normal">
+              {messages.length}개
+            </span>
+            {collapsed && unread > 0 && (
+              <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-black normal-case tracking-normal text-stone-900">
+                {unread > 99 ? '99+' : unread}
+              </span>
+            )}
+          </h3>
+          <span className="text-[11px] font-bold text-violet-100/60">
+            {collapsed ? '펼치기' : '접기'}
+          </span>
+        </button>
+
+        {!collapsed && (
+          <>
+            <p className="mt-2 rounded-lg bg-violet-500/15 px-2.5 py-2 text-[11px] font-semibold leading-snug text-violet-100/90">
+              👻 유령끼리만 보이는 비밀 채팅입니다. 생존 학생에게 정답/직업을
+              스포일러하지 마세요!
+            </p>
+            <div className="mt-2 flex h-64 flex-col">
+              <div className="flex-1 space-y-2 overflow-y-auto px-1">
+                {messages.length === 0 && (
+                  <p className="text-xs text-white/40">아직 메시지가 없습니다.</p>
+                )}
+                {messages.map((m) => {
+                  const mine = m.senderId === me.id;
+                  return (
+                    <div
+                      key={m.id}
+                      className={`max-w-[88%] rounded-2xl px-3 py-2 text-sm ${
+                        mine
+                          ? 'ml-auto bg-violet-600 text-white'
+                          : 'bg-white/10 text-white'
+                      }`}
+                    >
+                      <p className="flex items-center justify-between gap-2 text-[10px] font-semibold opacity-75">
+                        <span>{m.senderName}</span>
+                        <span className="font-normal tabular-nums opacity-80">
+                          {formatChatTime(m.timestamp)}
+                        </span>
+                      </p>
+                      <p className="mt-0.5 whitespace-pre-wrap break-words">
+                        {m.text}
+                      </p>
+                    </div>
+                  );
+                })}
+                <div ref={bottomRef} />
               </div>
-            );
-          })}
-          <div ref={bottomRef} />
-        </div>
-        <div className="mt-2 flex gap-2">
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.nativeEvent.isComposing) onSend();
-            }}
-            placeholder="유령에게만 보이는 메시지..."
-            maxLength={200}
-            className="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/35 focus:border-violet-400/50"
-          />
-          <button
-            type="button"
-            disabled={sending || !text.trim() || me.isAlive}
-            onClick={onSend}
-            className="rounded-xl bg-violet-500 px-3 text-white disabled:opacity-40"
-            aria-label="전송"
-          >
-            <Send className="h-4 w-4" />
-          </button>
-        </div>
+              <div className="mt-2 flex gap-2">
+                <input
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) onSend();
+                  }}
+                  placeholder="유령에게만 보이는 메시지..."
+                  maxLength={200}
+                  className="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/35 focus:border-violet-400/50"
+                />
+                <button
+                  type="button"
+                  disabled={sending || !text.trim() || me.isAlive}
+                  onClick={onSend}
+                  className="rounded-xl bg-violet-500 px-3 text-white disabled:opacity-40"
+                  aria-label="전송"
+                >
+                  <Send className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </section>
     </div>
   );

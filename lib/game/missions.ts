@@ -124,6 +124,7 @@ export function emptyMafiaMissionState(): MafiaMissionState {
     type: null,
     description: '',
     outcome: null,
+    assignedAt: null,
     disruptProgress: 0,
   };
 }
@@ -132,6 +133,7 @@ export function buildMafiaMissionState(
   room: GameRoom,
   config: MafiaMissionAssignConfig,
 ): MafiaMissionState {
+  const assignedAt = Date.now();
   if (config.type === 'NIGHT_DISRUPT') {
     const n = Math.max(1, config.disruptTargetCount ?? 3);
     return {
@@ -139,6 +141,7 @@ export function buildMafiaMissionState(
       type: 'NIGHT_DISRUPT',
       description: `[밤] 시민 미션 성공률 낮추기 — 연속 방해 (목표 ${n}회 오답)`,
       outcome: 'PENDING',
+      assignedAt,
       disruptTargetCount: n,
       disruptProgress: 0,
     };
@@ -152,6 +155,7 @@ export function buildMafiaMissionState(
     type: 'DAY_VOTE_ELIMINATE',
     description: `[낮] 이번 투표에서 [${name}] 탈락시키기`,
     outcome: 'PENDING',
+    assignedAt,
     voteTargetPlayerId: config.voteTargetPlayerId ?? null,
     disruptProgress: 0,
   };
