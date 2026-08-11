@@ -722,9 +722,6 @@ function PublicConnectedRoster({ room }: { room: GameRoom }) {
     );
   }
 
-  const isWaiting = room.gameState === 'WAITING';
-  const avatarSize = isWaiting ? 88 : 64;
-
   return (
     <section className="w-full max-w-6xl rounded-[1.75rem] border border-white/15 bg-black/40 p-4 shadow-xl backdrop-blur-md sm:p-6">
       <div className="mb-4 flex items-center justify-center gap-2 text-xs font-black tracking-[0.22em] text-amber-100/85 sm:text-sm">
@@ -746,59 +743,20 @@ function PublicConnectedRoster({ room }: { room: GameRoom }) {
         {players.map((player) => (
           <li
             key={player.id}
-            className={`flex w-full max-w-[7.5rem] flex-col items-center gap-2 rounded-2xl px-2 py-3 text-center ring-1 transition sm:max-w-[8.5rem] ${
-              player.isAlive
-                ? 'bg-white/5 ring-white/12'
-                : 'bg-red-950/45 ring-red-300/25 opacity-80'
-            }`}
+            className="flex w-full max-w-[7.5rem] flex-col items-center gap-2 rounded-2xl bg-white/5 px-2 py-3 text-center ring-1 ring-white/12 transition sm:max-w-[8.5rem]"
           >
             <CharacterAvatar
               avatarId={player.avatarId}
               isAlive={player.isAlive}
               state={player.isAlive ? null : 'dead'}
-              size={avatarSize}
+              size={88}
             />
-            <p
-              className={`w-full truncate text-sm font-black sm:text-base ${
-                player.isAlive ? 'text-white' : 'text-red-100/85'
-              }`}
-            >
+            <p className="w-full truncate text-sm font-black text-white sm:text-base">
               {player.name}
             </p>
-            {!player.isAlive && (
-              <span className="text-[10px] font-bold tracking-wide text-red-200/80">
-                탈락
-              </span>
-            )}
           </li>
         ))}
       </ul>
-    </section>
-  );
-}
-
-function PublicEliminatedStrip({ room }: { room: GameRoom }) {
-  const eliminated = playerList(room).filter((player) => !player.isAlive).slice(-4);
-  if (eliminated.length === 0) return null;
-
-  return (
-    <section className="w-full max-w-6xl rounded-2xl border border-red-300/25 bg-black/45 p-3 shadow-xl backdrop-blur-md sm:p-4">
-      <div className="mb-2 flex items-center justify-center gap-2 text-xs font-black tracking-[0.2em] text-red-100/80 sm:text-sm">
-        <Skull className="h-4 w-4" />
-        탈락 학생
-      </div>
-      <div className="flex flex-wrap justify-center gap-3 sm:gap-5">
-        {eliminated.map((player) => (
-          <div key={player.id} className="flex items-center gap-2 rounded-xl bg-red-950/55 px-2 py-2 ring-1 ring-red-300/20 sm:gap-3 sm:px-3">
-            <CharacterAvatar
-              avatarId={player.avatarId}
-              isAlive={false}
-              size={48}
-            />
-            <span className="text-sm font-black text-red-50 sm:text-base">{player.name}</span>
-          </div>
-        ))}
-      </div>
     </section>
   );
 }
@@ -1162,12 +1120,11 @@ export default function HostDisplayPage() {
           ) : room ? (
             <>
               <PublicStage room={room} now={now} />
-              <PublicConnectedRoster room={room} />
+              {room.gameState === 'WAITING' && (
+                <PublicConnectedRoster room={room} />
+              )}
             </>
           ) : null}
-          {room && room.gameState !== 'WAITING' && (
-            <PublicEliminatedStrip room={room} />
-          )}
         </main>
 
         <footer className="relative z-20 px-5 pb-4 text-center text-[10px] font-bold tracking-wide text-white/45 sm:text-xs">
