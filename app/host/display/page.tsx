@@ -35,7 +35,6 @@ import { playerGenderFromAvatarId } from '@/lib/game/avatars';
 import {
   getCharacterPronoun,
   getCharacterStateForRole,
-  getNightAttackAnnouncement,
 } from '@/lib/characterUtils';
 import { PublicMafiaKillScene } from '@/components/play/PublicMafiaKillScene';
 import { playMorningEventSound, playReporterNewsSound } from '@/lib/game/audio';
@@ -404,18 +403,6 @@ function PublicMorningEvent({
         avatarSize={avatarSize}
         wasKilled={wasKilled}
         targetKey={event.targetId ?? targetName}
-        deathMessage={
-          wasKilled && deadRole && room.revealDeathRoles !== false
-            ? getNightAttackAnnouncement(
-                deadRole,
-                Boolean(
-                  room.nightResults?.mafiaFriendlyFirePlayerIds?.includes(
-                    event.targetId ?? '',
-                  ),
-                ),
-              )
-            : null
-        }
       />
     );
   }
@@ -853,7 +840,6 @@ function PublicVoteResult({
         isMafia={isMafia}
         role={result.eliminatedRole}
         finalRoleReveal
-        gender={eliminated.gender}
         displayMode
       />
     );
@@ -1102,9 +1088,6 @@ export default function HostDisplayPage() {
       theme="VILLAGE"
       gameState={phase}
       playerCount={room && phase === 'WAITING' ? playerList(room).length : 0}
-      openingSequenceStartedAt={room?.openingSequenceStartedAt}
-      morningTransitionStartedAt={room?.morningTransitionStartedAt}
-      sceneCast
       className="min-h-screen"
     >
       <div className="flex min-h-screen flex-col text-white">
