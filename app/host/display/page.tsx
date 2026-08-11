@@ -32,7 +32,11 @@ import {
 } from '@/components/play/MorningSequenceModal';
 import { isFirebaseConfigured } from '@/lib/firebase';
 import { playerGenderFromAvatarId } from '@/lib/game/avatars';
-import { getCharacterStateForRole } from '@/lib/characterUtils';
+import {
+  getCharacterPronoun,
+  getCharacterStateForRole,
+  getNightAttackAnnouncement,
+} from '@/lib/characterUtils';
 import { PublicMafiaKillScene } from '@/components/play/PublicMafiaKillScene';
 import { playMorningEventSound, playReporterNewsSound } from '@/lib/game/audio';
 import { ROLE_ACCENTS, ROLE_LABELS } from '@/lib/game/roles';
@@ -236,7 +240,7 @@ function formatSeconds(value: number): string {
 function phaseDescription(room: GameRoom): string {
   switch (room.gameState) {
     case 'WAITING':
-      return '학생들이 캐릭터를 선택하고 입장하기를 기다리고 있습니다.';
+      return '어두운 밤이 찾아오기 전, 하나둘 마을 광장에 촛불을 밝히며 사람들이 모여듭니다.';
     case 'DAY_TALK':
       return room.talkEndsAt
         ? '토론 시간이 진행 중입니다. 남은 시간 안에 단서를 나누세요.'
@@ -250,7 +254,7 @@ function phaseDescription(room: GameRoom): string {
     case 'VOTE_RESULT':
       return '낮 투표 결과를 확인한 뒤 밤 세션으로 이동합니다.';
     case 'NIGHT':
-      return '자기 자리로 돌아가 퀴즈와 밤의 행동을 해주세요.';
+      return '고요한 밤의 장막 뒤에서 서늘한 선택들이 오갑니다. 당신에게 부여된 밤의 시간을 맞이하세요.';
     case 'RESULT':
       return '지난밤의 결과를 모두 함께 확인합니다.';
     case 'ENDED':
@@ -293,7 +297,7 @@ function stageHeadline(state: GameState): string {
 }
 
 const NIGHT_START_NOTICE =
-  '마을에 어둠이 내려앉았습니다. 모두가 잠든 밤, 활동을 시작해주세요.';
+  '고요한 밤의 장막 뒤에서 서늘한 선택들이 오갑니다. 당신에게 부여된 밤의 시간을 맞이하세요.';
 
 function PublicStage({ room, now }: { room: GameRoom; now: number }) {
   const timerEnd = getTimerEnd(room);
@@ -305,7 +309,7 @@ function PublicStage({ room, now }: { room: GameRoom; now: number }) {
       key={room.gameState}
       initial={{ opacity: 0, y: 18, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      className="w-full max-w-5xl rounded-[2rem] border border-white/20 bg-slate-950/55 p-7 text-center shadow-2xl shadow-black/40 backdrop-blur-md sm:p-12"
+      className="w-full max-w-4xl rounded-[2rem] border border-white/20 bg-slate-950/55 p-7 text-center shadow-2xl shadow-black/40 backdrop-blur-md sm:p-12"
     >
       <div className="flex items-center justify-center gap-3 text-sm font-black tracking-wide text-white/55 sm:text-base">
         {isNight ? <Moon className="h-5 w-5 text-indigo-200" /> : <Sun className="h-5 w-5 text-amber-200" />}
@@ -319,7 +323,7 @@ function PublicStage({ room, now }: { room: GameRoom; now: number }) {
           {NIGHT_START_NOTICE}
         </p>
       ) : (
-        <p className="mx-auto mt-5 max-w-2xl text-lg font-semibold text-white/75 sm:text-2xl">
+        <p className={`mx-auto mt-5 max-w-2xl font-semibold text-white/75 ${room.gameState === 'WAITING' ? 'text-base sm:text-xl' : 'text-lg sm:text-2xl'}`}>
           {phaseDescription(room)}
         </p>
       )}
@@ -348,12 +352,6 @@ function PublicStage({ room, now }: { room: GameRoom; now: number }) {
         </div>
       )}
 
-      {room.gameState === 'WAITING' && (
-        <div className="mx-auto mt-9 flex max-w-2xl items-center justify-center gap-3 rounded-2xl bg-white/10 px-5 py-4 text-base font-bold text-white/75 ring-1 ring-white/15 sm:text-xl">
-          <Monitor className="h-6 w-6 text-amber-200" />
-          선생님 화면에서 게임을 시작하면 이 화면도 자동으로 전환됩니다.
-        </div>
-      )}
     </motion.section>
   );
 }
@@ -393,6 +391,7 @@ function PublicMorningEvent({
         role={deadRole}
         step={identityStep}
         avatarSize={avatarSize}
+        gender={targetGender}
       />
     );
   }
@@ -405,6 +404,18 @@ function PublicMorningEvent({
         avatarSize={avatarSize}
         wasKilled={wasKilled}
         targetKey={event.targetId ?? targetName}
+        deathMessage={
+          wasKilled && deadRole && room.revealDeathRoles !== false
+            ? getNightAttackAnnouncement(
+                deadRole,
+                Boolean(
+                  room.nightResults?.mafiaFriendlyFirePlayerIds?.includes(
+                    event.targetId ?? '',
+                  ),
+                ),
+              )
+            : null
+        }
       />
     );
   }
@@ -613,12 +624,14 @@ function PublicIdentityReveal({
   role,
   step,
   avatarSize,
+  gender,
 }: {
   avatarId?: string;
   name: string;
   role: Role;
   step: Exclude<IdentityRevealStep, 'NONE'>;
   avatarSize: number;
+  gender?: PlayerGender | null;
 }) {
   const isMafia = role === 'MAFIA';
   const isFullRole = step === 'REVEAL_FULL_ROLE';
@@ -683,7 +696,7 @@ function PublicIdentityReveal({
           }`}
         >
           {isFullRole
-            ? `${name} 님의 정체는 ${ROLE_LABELS[role]}였습니다.`
+            ? `${getCharacterPronoun(gender)}의 정체는 ${ROLE_LABELS[role]}였습니다.`
             : isTease
               ? `${name} 님은... 마피아가`
               : `${name} 님은... 마피아가 ${isMafia ? '맞습니다!' : '아닙니다!'}`}
@@ -697,6 +710,83 @@ function PublicIdentityReveal({
         </p>
       </div>
     </motion.section>
+  );
+}
+
+function PublicConnectedRoster({ room }: { room: GameRoom }) {
+  const players = useMemo(
+    () =>
+      playerList(room)
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name, 'ko')),
+    [room],
+  );
+
+  if (players.length === 0) {
+    return (
+      <section className="w-full max-w-6xl rounded-[1.75rem] border border-white/15 bg-black/40 px-5 py-8 text-center shadow-xl backdrop-blur-md sm:px-8">
+        <p className="text-sm font-black tracking-wide text-white/50 sm:text-base">
+          아직 입장한 학생이 없습니다
+        </p>
+        <p className="mt-2 text-xs font-semibold text-white/35 sm:text-sm">
+          PIN 또는 QR로 접속하면 여기에 캐릭터와 닉네임이 나타납니다.
+        </p>
+      </section>
+    );
+  }
+
+  const isWaiting = room.gameState === 'WAITING';
+  const avatarSize = isWaiting ? 88 : 64;
+
+  return (
+    <section className="w-full max-w-6xl rounded-[1.75rem] border border-white/15 bg-black/40 p-4 shadow-xl backdrop-blur-md sm:p-6">
+      <div className="mb-4 flex items-center justify-center gap-2 text-xs font-black tracking-[0.22em] text-amber-100/85 sm:text-sm">
+        <Users className="h-4 w-4 text-amber-200" />
+        접속한 학생
+        <span className="rounded-full bg-amber-400/90 px-2.5 py-0.5 font-mono text-[11px] tracking-normal text-stone-900 sm:text-xs">
+          {players.length}명
+        </span>
+      </div>
+      <ul
+        className={`grid justify-items-center gap-3 sm:gap-4 ${
+          players.length <= 6
+            ? 'grid-cols-3 sm:grid-cols-3 md:grid-cols-6'
+            : players.length <= 12
+              ? 'grid-cols-3 sm:grid-cols-4 md:grid-cols-6'
+              : 'grid-cols-4 sm:grid-cols-5 md:grid-cols-8'
+        }`}
+      >
+        {players.map((player) => (
+          <li
+            key={player.id}
+            className={`flex w-full max-w-[7.5rem] flex-col items-center gap-2 rounded-2xl px-2 py-3 text-center ring-1 transition sm:max-w-[8.5rem] ${
+              player.isAlive
+                ? 'bg-white/5 ring-white/12'
+                : 'bg-red-950/45 ring-red-300/25 opacity-80'
+            }`}
+          >
+            <CharacterAvatar
+              avatarId={player.avatarId}
+              isAlive={player.isAlive}
+              state={player.isAlive ? null : 'dead'}
+              size={avatarSize}
+            />
+            <p
+              className={`w-full truncate text-sm font-black sm:text-base ${
+                player.isAlive ? 'text-white' : 'text-red-100/85'
+              }`}
+            >
+              {player.name}
+            </p>
+            {!player.isAlive && (
+              <span className="text-[10px] font-bold tracking-wide text-red-200/80">
+                탈락
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -745,6 +835,9 @@ function PublicVoteResult({
   const isTease = voteStep === 'MAFIA_TEASE';
   const isMafiaResult = voteStep === 'MAFIA_RESULT';
   const isFullRole = voteStep === 'FULL_ROLE';
+  const revealActualRole = Boolean(
+    canRevealIdentity && (isMafiaResult || isFullRole),
+  );
   const roleLabel =
     canRevealIdentity && result?.eliminatedRole
       ? ROLE_LABELS[result.eliminatedRole]
@@ -760,6 +853,7 @@ function PublicVoteResult({
         isMafia={isMafia}
         role={result.eliminatedRole}
         finalRoleReveal
+        gender={eliminated.gender}
         displayMode
       />
     );
@@ -786,10 +880,10 @@ function PublicVoteResult({
               avatarId={eliminated.avatarId}
               isAlive
               role={result.eliminatedRole}
-              revealRole={isFullRole}
-              state={isFullRole && result.eliminatedRole
+              revealRole={revealActualRole}
+              state={revealActualRole && result.eliminatedRole
                 ? getCharacterStateForRole(result.eliminatedRole)
-                : 'arrested'}
+                : 'normal'}
               size={avatarSize}
               className={`relative z-10 transition-all duration-500 ${isFullRole ? 'scale-105' : ''}`}
             />
@@ -1004,7 +1098,15 @@ export default function HostDisplayPage() {
   const phase = toBackgroundPhase(room?.gameState);
 
   return (
-    <GameBackground theme="VILLAGE" gameState={phase} playerCount={room && phase === 'WAITING' ? playerList(room).length : 0} className="min-h-screen">
+    <GameBackground
+      theme="VILLAGE"
+      gameState={phase}
+      playerCount={room && phase === 'WAITING' ? playerList(room).length : 0}
+      openingSequenceStartedAt={room?.openingSequenceStartedAt}
+      morningTransitionStartedAt={room?.morningTransitionStartedAt}
+      sceneCast
+      className="min-h-screen"
+    >
       <div className="flex min-h-screen flex-col text-white">
         <header className="relative z-20 flex flex-wrap items-start justify-between gap-3 px-5 py-4 sm:px-10 sm:py-6">
           <div className="flex items-start gap-3">
@@ -1075,9 +1177,14 @@ export default function HostDisplayPage() {
               />
             </AnimatePresence>
           ) : room ? (
-            <PublicStage room={room} now={now} />
+            <>
+              <PublicStage room={room} now={now} />
+              <PublicConnectedRoster room={room} />
+            </>
           ) : null}
-          {room && <PublicEliminatedStrip room={room} />}
+          {room && room.gameState !== 'WAITING' && (
+            <PublicEliminatedStrip room={room} />
+          )}
         </main>
 
         <footer className="relative z-20 px-5 pb-4 text-center text-[10px] font-bold tracking-wide text-white/45 sm:text-xs">

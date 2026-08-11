@@ -1,7 +1,14 @@
 import Link from 'next/link';
 import { Monitor, Settings, Smartphone } from 'lucide-react';
 
-export default function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams?: Promise<{ adminError?: string }>;
+}) {
+  const params = searchParams ? await searchParams : undefined;
+  const showForbidden = params?.adminError === 'forbidden';
+
   return (
     <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden bg-stone-950 px-6 text-white">
       {/* 분위기용 배경 */}
@@ -28,6 +35,15 @@ export default function Home() {
       </Link>
 
       <main className="relative z-10 flex w-full max-w-3xl flex-col items-center text-center">
+        {showForbidden && (
+          <div
+            role="alert"
+            className="mb-6 w-full max-w-md rounded-xl bg-red-950/70 px-4 py-3 text-sm font-semibold text-red-100 ring-1 ring-red-400/35"
+          >
+            관리자 권한이 없는 계정입니다.
+          </div>
+        )}
+
         <p className="text-xs font-semibold uppercase tracking-[0.35em] text-amber-400/90">
           Classroom Game
         </p>
