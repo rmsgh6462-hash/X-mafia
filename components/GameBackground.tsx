@@ -2,7 +2,6 @@
 
 import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, useState } from 'react';
-import { SceneCharacterDecor } from '@/components/SceneCharacterDecor';
 import type { Theme } from '@/types/game';
 
 export type BackgroundPhase = 'WAITING' | 'DAY' | 'NIGHT' | 'RESULT';
@@ -27,28 +26,53 @@ export interface GameBackgroundProps {
   children?: React.ReactNode;
 }
 
-type SceneKey = 'VILLAGE_DAY' | 'VILLAGE_DUSK' | 'VILLAGE_NIGHT';
+type SceneKey =
+  | 'VILLAGE_DAY'
+  | 'VILLAGE_DAY_CAST'
+  | 'VILLAGE_DUSK'
+  | 'VILLAGE_DUSK_CAST'
+  | 'VILLAGE_NIGHT'
+  | 'VILLAGE_NIGHT_CAST';
 
 const SCENE_IMAGES: Record<SceneKey, { src: string; alt: string }> = {
   VILLAGE_DAY: {
     src: '/backgrounds/village-day.png',
     alt: '햇살이 비치는 평화로운 마을 광장',
   },
+  VILLAGE_DAY_CAST: {
+    src: '/backgrounds/village-day-cast.png',
+    alt: '시민 실루엣들이 모여 토론하는 낮의 마을 광장',
+  },
   VILLAGE_DUSK: {
     src: '/backgrounds/village-dusk.png',
     alt: '해질녘 안개가 내려앉은 마을 광장',
+  },
+  VILLAGE_DUSK_CAST: {
+    src: '/backgrounds/village-dusk-cast.png',
+    alt: '여섯 실루엣이 모여 있는 해질녘 안개 마을 광장',
   },
   VILLAGE_NIGHT: {
     src: '/backgrounds/village-night.png',
     alt: '달빛과 등불이 비치는 고요한 밤의 마을',
   },
+  VILLAGE_NIGHT_CAST: {
+    src: '/backgrounds/village-night-cast.png',
+    alt: '마피아 실루엣이 도망가는 사람을 바라보는 밤의 마을',
+  },
 };
 
-function resolveSceneKey(gameState: BackgroundPhase): SceneKey {
+function resolveSceneKey(
+  gameState: BackgroundPhase,
+  withSceneCast: boolean,
+): SceneKey {
   // 대기=해질녘, 낮·아침 발표=낮, 밤=밤 배경
-  if (gameState === 'NIGHT') return 'VILLAGE_NIGHT';
-  if (gameState === 'WAITING') return 'VILLAGE_DUSK';
-  return 'VILLAGE_DAY';
+  if (gameState === 'NIGHT') {
+    return withSceneCast ? 'VILLAGE_NIGHT_CAST' : 'VILLAGE_NIGHT';
+  }
+  if (gameState === 'WAITING') {
+    return withSceneCast ? 'VILLAGE_DUSK_CAST' : 'VILLAGE_DUSK';
+  }
+  return withSceneCast ? 'VILLAGE_DAY_CAST' : 'VILLAGE_DAY';
 }
 
 type OpeningStep = 'DUSK' | 'NIGHT' | 'DAWN';
@@ -264,17 +288,11 @@ export default function GameBackground({
     : morningNight
       ? 'NIGHT'
       : gameState;
-  const sceneKey = resolveSceneKey(visualPhase);
+  const sceneKey = resolveSceneKey(visualPhase, sceneCast);
   const scene = SCENE_IMAGES[sceneKey];
   const overlayClass = getOverlayClass(visualPhase);
   const isNight = visualPhase === 'NIGHT';
   const isWaiting = visualPhase === 'WAITING';
-  const sceneCastPhase =
-    visualPhase === 'NIGHT'
-      ? 'NIGHT'
-      : visualPhase === 'WAITING'
-        ? 'WAITING'
-        : 'DAY';
 
   return (
     <div
@@ -345,11 +363,6 @@ export default function GameBackground({
       <AnimatePresence mode="wait">
         <OpeningSequenceOverlay step={openingStep} />
       </AnimatePresence>
-
-      {sceneCast &&
-        (gameState === 'WAITING' || gameState === 'DAY' || gameState === 'NIGHT') && (
-        <SceneCharacterDecor phase={sceneCastPhase} />
-      )}
 
       {children && (
         <div className="relative z-[10] h-full w-full">{children}</div>

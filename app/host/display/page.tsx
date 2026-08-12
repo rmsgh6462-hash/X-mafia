@@ -62,6 +62,8 @@ function formatPin(pin: string) {
   return pin.replace(/(\d{3})(\d{3})/, '$1 $2');
 }
 
+const WAITING_SCENE_INTRO_MS = 10_000;
+
 const STATE_LABELS: Record<GameState, string> = {
   WAITING: '입장 대기',
   DAY_TALK: '낮',
@@ -277,6 +279,27 @@ function PublicStats({ room }: { room: GameRoom }) {
         탈락 {eliminated}명
       </span>
     </div>
+  );
+}
+
+function WaitingSceneIntro() {
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 18 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 1.2, ease: 'easeOut' }}
+      className="w-full max-w-4xl rounded-[2rem] border border-white/20 bg-slate-950/58 p-8 text-center shadow-2xl shadow-black/45 backdrop-blur-[3px] sm:p-14"
+    >
+      <p className="text-xs font-black uppercase tracking-[0.42em] text-amber-200/80 sm:text-sm">
+        X-MAFIA · BEFORE NIGHTFALL
+      </p>
+      <h1 className="mx-auto mt-6 max-w-3xl text-balance text-3xl font-black leading-tight tracking-tight text-white drop-shadow-lg sm:text-6xl">
+        어두운 밤이 찾아오기 전, 하나둘 마을 광장에 촛불을 밝히며 사람들이 모여듭니다.
+      </h1>
+      <p className="mx-auto mt-6 max-w-2xl text-base font-semibold leading-relaxed text-white/75 sm:text-2xl">
+        겉으로는 평화로워 보이는 이들 사이, 당신은 어떤 얼굴로 이 마을에 서 있습니까?
+      </p>
+    </motion.section>
   );
 }
 
@@ -951,6 +974,7 @@ export default function HostDisplayPage() {
   const [displayAvatarSize, setDisplayAvatarSize] = useState(520);
   const [joinUrl, setJoinUrl] = useState('');
   const [pinQrExpanded, setPinQrExpanded] = useState(false);
+  const [waitingIntroStartedAt, setWaitingIntroStartedAt] = useState<number | null>(null);
 
   useEffect(() => {
     setJoinUrl(window.location.origin);
@@ -999,6 +1023,14 @@ export default function HostDisplayPage() {
   }, []);
 
   useEffect(() => {
+    if (room?.gameState !== 'WAITING') {
+      setWaitingIntroStartedAt(null);
+      return;
+    }
+    setWaitingIntroStartedAt((startedAt) => startedAt ?? Date.now());
+  }, [room?.roomId, room?.gameState]);
+
+  useEffect(() => {
     const updateAvatarSize = () => {
       setDisplayAvatarSize(
         Math.max(320, Math.min(640, Math.floor(window.innerHeight * 0.52))),
@@ -1023,6 +1055,10 @@ export default function HostDisplayPage() {
   const showMorningSequence = room?.gameState === 'RESULT' && Boolean(currentMorningEvent);
   const showVoteResult =
     room?.gameState === 'VOTE_RESULT' && Boolean(room.dayVoteResult);
+  const showWaitingSceneIntro =
+    room?.gameState === 'WAITING' &&
+    (waitingIntroStartedAt === null ||
+      now - waitingIntroStartedAt < WAITING_SCENE_INTRO_MS);
 
   useEffect(() => {
     if (!showMorningSequence || !currentMorningEvent) return;
@@ -1045,11 +1081,17 @@ export default function HostDisplayPage() {
     <GameBackground
       theme="VILLAGE"
       gameState={phase}
+      sceneCast
       playerCount={room && phase === 'WAITING' ? playerList(room).length : 0}
+      openingSequenceStartedAt={room?.openingSequenceStartedAt}
+      morningTransitionStartedAt={room?.morningTransitionStartedAt}
       className="min-h-screen"
     >
       <div className="flex min-h-screen flex-col text-white">
-        <header className="relative z-20 flex flex-wrap items-start justify-between gap-3 px-5 py-4 sm:px-10 sm:py-6">
+        <header
+          aria-hidden={showWaitingSceneIntro}
+          className={`relative z-20 flex flex-wrap items-start justify-between gap-3 px-5 py-4 transition-opacity duration-1000 sm:px-10 sm:py-6 ${showWaitingSceneIntro ? 'invisible opacity-0' : 'opacity-100'}`}
+        >
           <div className="flex items-start gap-3">
             <Monitor className="h-7 w-7 shrink-0 text-amber-200 sm:h-9 sm:w-9" />
             <div>
@@ -1096,8 +1138,10 @@ export default function HostDisplayPage() {
               <p className="mt-3 text-sm font-semibold text-red-100/70">교사 화면에서 학생 공유 화면 창을 다시 열어 주세요.</p>
             </div>
           )}
-          {room && <PublicStats room={room} />}
-          {room && room.gameState === 'ENDED' ? (
+          {room && !showWaitingSceneIntro && <PublicStats room={room} />}
+          {room && showWaitingSceneIntro ? (
+            <WaitingSceneIntro />
+          ) : room && room.gameState === 'ENDED' ? (
             <PublicVictoryDisplay room={room} />
           ) : room && showMorningSequence && currentMorningEvent ? (
             <AnimatePresence mode="wait">
@@ -1127,7 +1171,10 @@ export default function HostDisplayPage() {
           ) : null}
         </main>
 
-        <footer className="relative z-20 px-5 pb-4 text-center text-[10px] font-bold tracking-wide text-white/45 sm:text-xs">
+        <footer
+          aria-hidden={showWaitingSceneIntro}
+          className={`relative z-20 px-5 pb-4 text-center text-[10px] font-bold tracking-wide text-white/45 transition-opacity duration-1000 sm:text-xs ${showWaitingSceneIntro ? 'invisible opacity-0' : 'opacity-100'}`}
+        >
           소리(나레이션·배경음)는 교사 화면에서 켜고 끌 수 있습니다. 교사가 진행하면 학생 공유 화면이 실시간으로 전환됩니다.
         </footer>
       </div>
