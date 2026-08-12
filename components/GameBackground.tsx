@@ -288,7 +288,9 @@ export default function GameBackground({
     : morningNight
       ? 'NIGHT'
       : gameState;
-  const sceneKey = resolveSceneKey(visualPhase, sceneCast);
+  // 게임 시작 첫 밤에는 인물 없는 원본 밤 배경으로 전환해 밤의 시작을 분명하게 보여준다.
+  const useSceneCast = sceneCast && openingStep !== 'NIGHT';
+  const sceneKey = resolveSceneKey(visualPhase, useSceneCast);
   const scene = SCENE_IMAGES[sceneKey];
   const overlayClass = getOverlayClass(visualPhase);
   const isNight = visualPhase === 'NIGHT';

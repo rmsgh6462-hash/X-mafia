@@ -50,17 +50,21 @@ async function buildWaiting() {
     .toFile(path.join(backgroundDir, 'village-dusk-cast.png'));
 }
 
-async function buildWide(baseName, castName, outputName) {
+async function buildWide(baseName, castName, outputName, castScale = 1) {
   const base = await loadBackground(baseName);
-  const cast = await castImage(castName, outputSize.width, outputSize.height);
+  const castWidth = Math.round(outputSize.width * castScale);
+  const castHeight = Math.round(outputSize.height * castScale);
+  const cast = await castImage(castName, castWidth, castHeight);
+  const left = Math.round((outputSize.width - castWidth) / 2);
+  const top = outputSize.height - castHeight;
   await sharp(base)
-    .composite([{ input: cast, left: 0, top: 0 }])
+    .composite([{ input: cast, left, top }])
     .png({ compressionLevel: 9 })
     .toFile(path.join(backgroundDir, outputName));
 }
 
 await fs.mkdir(backgroundDir, { recursive: true });
 await buildWaiting();
-await buildWide('village-day.png', 'discussion-citizens.png', 'village-day-cast.png');
-await buildWide('village-night.png', 'night-mafia-chase.png', 'village-night-cast.png');
+await buildWide('village-day.png', 'discussion-citizens.png', 'village-day-cast.png', 0.88);
+await buildWide('village-night.png', 'night-mafia-chase.png', 'village-night-cast.png', 0.84);
 console.log('Built scene-cast backgrounds in public/backgrounds/.');

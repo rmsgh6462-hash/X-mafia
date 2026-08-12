@@ -99,6 +99,7 @@ function PlayShell({
   phase = 'WAITING',
   playerCount = 0,
   panel = 'day',
+  sceneCast = true,
   openingSequenceStartedAt = null,
   morningTransitionStartedAt = null,
 }: {
@@ -107,6 +108,7 @@ function PlayShell({
   phase?: BackgroundPhase;
   playerCount?: number;
   panel?: 'join' | 'day' | 'night' | 'ghost';
+  sceneCast?: boolean;
   openingSequenceStartedAt?: number | null;
   morningTransitionStartedAt?: number | null;
 }) {
@@ -122,7 +124,7 @@ function PlayShell({
       theme={theme}
       gameState={phase}
       playerCount={phase === 'WAITING' ? Math.min(playerCount, 10) : 0}
-      sceneCast
+      sceneCast={sceneCast}
       openingSequenceStartedAt={openingSequenceStartedAt}
       morningTransitionStartedAt={morningTransitionStartedAt}
       className="min-h-dvh"
@@ -733,6 +735,7 @@ function PlayPageInner() {
       phase={bgPhase}
       playerCount={totalCount}
       panel={shellPanel}
+      sceneCast={room.gameState !== 'ENDED'}
       openingSequenceStartedAt={room.openingSequenceStartedAt}
       morningTransitionStartedAt={room.morningTransitionStartedAt}
     >

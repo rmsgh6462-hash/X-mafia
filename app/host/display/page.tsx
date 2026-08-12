@@ -19,7 +19,10 @@ import {
   Wifi,
   WifiOff,
 } from 'lucide-react';
-import GameBackground, { type BackgroundPhase } from '@/components/GameBackground';
+import GameBackground, {
+  OPENING_SEQUENCE_DURATION_MS,
+  type BackgroundPhase,
+} from '@/components/GameBackground';
 import { HeaderPinQrPanel } from '@/components/common/HeaderPinQrPanel';
 import { CharacterAvatar } from '@/components/play/CharacterAvatar';
 import { EventIllustration } from '@/components/play/EventIllustration';
@@ -1055,6 +1058,10 @@ export default function HostDisplayPage() {
   const showMorningSequence = room?.gameState === 'RESULT' && Boolean(currentMorningEvent);
   const showVoteResult =
     room?.gameState === 'VOTE_RESULT' && Boolean(room.dayVoteResult);
+  const showOpeningSequence =
+    room?.gameState !== 'WAITING' &&
+    typeof room?.openingSequenceStartedAt === 'number' &&
+    now - room.openingSequenceStartedAt < OPENING_SEQUENCE_DURATION_MS;
   const showWaitingSceneIntro =
     room?.gameState === 'WAITING' &&
     (waitingIntroStartedAt === null ||
@@ -1081,7 +1088,7 @@ export default function HostDisplayPage() {
     <GameBackground
       theme="VILLAGE"
       gameState={phase}
-      sceneCast
+      sceneCast={room?.gameState !== 'ENDED'}
       playerCount={room && phase === 'WAITING' ? playerList(room).length : 0}
       openingSequenceStartedAt={room?.openingSequenceStartedAt}
       morningTransitionStartedAt={room?.morningTransitionStartedAt}
@@ -1138,10 +1145,12 @@ export default function HostDisplayPage() {
               <p className="mt-3 text-sm font-semibold text-red-100/70">교사 화면에서 학생 공유 화면 창을 다시 열어 주세요.</p>
             </div>
           )}
-          {room && !showWaitingSceneIntro && <PublicStats room={room} />}
+          {room && !showWaitingSceneIntro && !showOpeningSequence && (
+            <PublicStats room={room} />
+          )}
           {room && showWaitingSceneIntro ? (
             <WaitingSceneIntro />
-          ) : room && room.gameState === 'ENDED' ? (
+          ) : room && showOpeningSequence ? null : room && room.gameState === 'ENDED' ? (
             <PublicVictoryDisplay room={room} />
           ) : room && showMorningSequence && currentMorningEvent ? (
             <AnimatePresence mode="wait">
